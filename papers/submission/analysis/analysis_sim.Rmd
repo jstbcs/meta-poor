@@ -1,0 +1,627 @@
+```{r simulation-dat, echo = F}
+set.seed(123)
+
+I <- 100
+J <- 2
+K <- 50
+
+exp <- rep(1:I, each = J * K)
+cond <- rep(0:1, I, each = K)
+sub <- rep(1:K, I * J)
+
+#truth
+t.mu <- 1
+t.alpha <- rnorm(I, 0, .07)
+t.theta <- rtnorm(I, .065, .03, lower = 0)
+
+#data
+y <- rtnorm(I*J*K, t.mu + t.alpha[exp] + cond * t.theta[exp], .3, lower = 0)
+
+ybar <- tapply(y, list(exp, cond), mean)
+sds <- tapply(y, list(exp, cond), sd)
+
+effects <- ybar[, 2] - ybar[, 1]
+# plot(sort(effects), pch = 19)
+# abline(h = 0)
+```
+
+```{r all-data-meta}
+bayesEst <- function(dat, rScale = c(.24, .24, .4)){
+  
+  M <- 10000
+	N <- length(dat$lab)
+	J <- length(unique(dat$lab))
+	cond <- (dat$cond-.5)
+	
+	#Make design matrix
+	alpha <- 1:J
+	theta <- (J + 1):(2 * J)
+	mu <- 2 * J + 1
+	X <- matrix(nrow = N, ncol = 2 * J + 1, 0)
+	for (i in 1:N)
+	{
+		X[i, alpha[dat$lab[i]]] <- 1
+		X[i, theta[dat$lab[i]]] <- cond[i]
+		X[i, mu] <- cond[i]
+	}
+	gMap <- rep(0:2, c(J, J, 1))
+	samples <- nWayAOV(dat$Y, X
+	                   , gMap, rscale = rScale
+	                   , posterior = T, iterations = M)
+	keep <- 1000:M
+	mcmc <- samples[keep, theta + 1] + samples[keep, mu + 1]
+	est <- colMeans(mcmc)
+	q <- apply(mcmc, 2, quantile, p = c(.975, .025))
+	out <- data.frame(est, t(q), order(est))
+	colnames(out) <- c('center', 'upper', 'lower', 'order')
+	return(out)	
+}
+
+
+bayesBF <- function(dat
+                    , rScale=c(.24,.24,.4)
+                    , M=10000
+                    , Mprior=100000){
+  
+	N <- length(dat$lab)
+	J <- length(unique(dat$lab))
+	cond <- (dat$cond-.5)
+	
+	#Make design matrix
+	alpha <- 1:J
+	theta <- (J + 1):(2 * J)
+	mu <- 2 * J + 1
+	X <- matrix(nrow = N, ncol = 2 * J + 1, 0)
+	for (i in 1:N)
+	{
+		X[i, alpha[dat$lab[i]]] <- 1
+		X[i, theta[dat$lab[i]]] <- cond[i]
+		X[i, mu] <- cond[i]
+	}
+	
+	#Sampling and Bayes factor
+	gMap <- rep(0:2, c(J, J, 1))
+	samples <- nWayAOV(dat$Y, X
+	                   , gMap, rscale=rScale
+	                   , posterior=T, iterations=M)
+	#BF general model
+	bfFull <- nWayAOV(dat$Y, X
+	                  , gMap, rscale=rScale
+	                  , posterior=F)$bf
+	#BF Null model
+	bfNull <- nWayAOV(dat$Y, X[,1:J]
+	                  , gMap[1:J], rscale=rScale[1]
+	                  , posterior=F)$bf
+	
+	keep <- round((M/10)):M
+	effect <- samples[keep, theta + 1] + samples[keep, mu + 1]
+	#Are all theta > 0?
+	post.pos <- mean(apply(effect > 0, 1, mean) == 1)
+	
+	#Sampling from prior
+	gm <- rinvgamma(Mprior, .5, .5 * rScale[3]^2)
+	m.1 <- rnorm(Mprior, 0, sqrt(gm))
+	g <- rinvgamma(Mprior, .5, .5 * rScale[2]^2)
+	a1 <- 1:Mprior
+	for (m in 1:Mprior) a1[m] <- mean(rnorm(J, m.1[m], sqrt(g[m])) > 0)
+	prior.pos <- mean(a1 == 1)
+	bf <- c(exp(bfFull - bfNull)
+	        , exp(bfFull - bfNull) * post.pos / prior.pos)
+	out <- c(bf, post.pos, prior.pos)
+	names(out) <- c("F0", "P0", "post.pos", "prior.pos")
+	return(out)
+}
+```
+
+```{r all-dat-meta-analysis-sim, cache = T}
+sim.dat <- data.frame(lab = exp, sub, cond, Y = y)
+
+res.est <- bayesEst(sim.dat, rScale = c(1, 1/10, 1/5))
+res.bf <- bayesBF(sim.dat, rScale = c(1, 1/10, 1/5))
+```
+
+```{r get-z-d}
+get.z <- function(dat){
+  
+  temp <- cor(dat$y, dat$cond)
+  fisherz(temp)
+}
+
+get.d <- function(dat) { #cohen's d
+    ls <- tapply(dat$y, dat$cond, function(x) length(x)- 1)
+    md  <- diff(tapply(dat$y, dat$cond, mean))
+    vars <- tapply(dat$y, dat$cond, var)
+    csd <- ls[1] * vars[1] + ls[2] * vars[2]
+    csd <- csd/sum(ls)
+    csd <- sqrt(csd)                     ## common sd computation
+
+    return(md/csd)                        ## cohen's d
+}
+
+dats <- split(data.frame(y, cond, exp, sub), exp)
+zs <- sapply(dats, get.z)
+ds <- sapply(dats, get.d)
+```
+
+```{r chain-setup-sim}
+z <- zs
+ni <- rep(K * J, I)
+
+M <- 20000
+keep <- 2001:M
+
+mu.theta <- 0:(M - 1)
+theta <- matrix(nrow = M, ncol = I)
+
+s2.theta <- 1:M
+s2.mu.th <- 1:M
+
+theta[1, ] <- 0
+
+s2.theta[1] <- .05
+s2.mu.th[1] <- .1
+
+h.theta.2 <- .01
+h.mu.2 <- .01
+```
+
+```{r chain-gen-II-sim}
+for(m in 2:M){
+  
+  #theta
+  c <- z * (ni - 3) + mu.theta[m-1] / (s2.theta[m-1])
+  v <- 1/(ni - 3 + 1 / (s2.theta[m-1]))
+  theta[m, ] <- rnorm(I, c * v, sqrt(v))
+  
+  #mu.theta
+  c <- sum(theta[m,])/(s2.theta[m-1])
+  v <- 1/(I/(s2.theta[m-1]) + 1/(s2.mu.th[m-1]))
+  mu.theta[m] <- rnorm(1, c * v, sqrt(v))
+  
+  # #s2s
+  scale <- sum((theta[m, ] - mu.theta[m])^2) / 2
+  s2.theta[m] <- rinvgamma(1, 1 + I/2, scale + h.theta.2)
+
+  scale <- mu.theta[m]^2 / (2)
+  s2.mu.th[m] <- rinvgamma(1, 1.5, scale + h.mu.2)
+  
+}
+
+sim2.theta <- theta
+```
+
+```{r}
+get.bfs <- function(Z, N, Theta, R = 100000, priors = c(1, .01, 1, .01)){
+  
+  ## Analytic Bayes factor
+  
+  ### Marginal likelihood unconstrained model
+  s2_mu <- rinvgamma(R, priors[3], priors[4])
+  s2_theta <- rinvgamma(R, priors[1], priors[2])
+  get.log.likeli.g <- function(s2, z, n){ #s2 = vector of s2_mu and s2_theta
+    sum(dnorm(z, 0, sqrt(1/(n - 3) + s2[1] + s2[2]), log = T))
+  }
+  
+  r.likeli <- apply(cbind(s2_mu, s2_theta), 1, get.log.likeli.g, z = Z, n = N)
+  Mg <- mean(exp(r.likeli))
+  
+  # test <- apply(cbind(s2_mu, s2_theta)
+  #               , 1
+  #               , function(s2, n){sqrt(1/(n - 3) + s2[1] + s2[2])}, n = N[1])
+  
+  ### Marginal likelihood null model
+  lM0 <- sum(dnorm(Z, 0, sqrt(1/(N - 3)), log = T))
+  
+  ### Resulting BF
+  BF.g0 <- Mg / exp(lM0)
+  
+  ## Encompassing Bayes factor
+  
+  ### Posterior probability of all positive
+  good <- Theta > 0
+  all.good <- apply(good, 1, mean)
+  PostCount <- mean(all.good == 1)
+  
+  ### Prior probability of all positive
+  x <- matrix(nrow = R, ncol = I)
+  mu <- rnorm(R, 0, sqrt(s2_mu))
+  for (i in 1:I)
+    x[,i] <- rnorm(R, mu, sqrt(s2_theta))
+  
+  all.greater <- function(x) as.integer(mean(x > 0) == 1)
+  PriorCount <- mean(apply(x, 1, all.greater))
+  
+  ### Resulting BF
+  bf.FP <- PriorCount/PostCount
+  
+  return(c("BF.g0" = BF.g0, "BF.gp" = bf.FP))
+}
+
+set0 <- c(1, .01, 1, .01)
+bfs.sim <- get.bfs(zs, ni, sim2.theta[keep,])
+```
+
+
+```{r, eval = F}
+### Unconstrained model
+R <- 100000
+s2_mu <- rinvgamma(R, 2, .01)
+s2_theta <- rinvgamma(R, 2, .01)
+get.log.likeli.g <- function(s2, z, n){ #s2 = vector of s2_mu and s2_theta
+  sum(dnorm(z, 0, sqrt(1/(n - 3) + s2[1] + s2[2]), log = T))
+}
+
+r.likeli <- apply(cbind(s2_mu, s2_theta), 1, get.log.likeli.g, z = zs, n = ni)
+Mg <- mean(exp(r.likeli))
+
+test <- apply(cbind(s2_mu, s2_theta), 1, function(s2, n){sqrt(1/(n - 3) + s2[1] + s2[2])}, n = ni[1])
+
+### Null model
+
+lM0 <- sum(dnorm(zs, 0, sqrt(1/(ni - 3)), log = T))
+
+BF.g0 <- Mg / exp(lM0)
+```
+
+```{r bf-simpos, eval = F}
+good <- sim2.theta[keep,] > 0
+all.good <- apply(good, 1, mean)
+PostCount <- mean(all.good == 1)
+  
+#prior settings
+R <- 200000
+b <- .01
+a <- 2
+alpha.m <- 2
+beta.m <- .01
+
+x <- matrix(nrow = R, ncol = I)
+
+s2.th <- rinvgamma(R, a, b)
+s2.mu <- rinvgamma(R, alpha.m, beta.m)
+mu <- rnorm(R, 0, sqrt(s2.mu))
+for (i in 1:I)
+  x[,i] <- rnorm(R, mu, sqrt(s2.th))
+  
+all.greater <- function(x) as.integer(mean(x > 0) == 1)
+PriorCount <- mean(apply(x, 1, all.greater))
+bf.FP <- PriorCount/PostCount
+```
+
+
+```{r fig-z-sim, fig.width=4.5, fig.height=8, fig.align="center", fig.cap="Results for the simulated data set. A. Fisher's $z$ as a function of the observed effect. Importantly, the direction of the effect is preserved. B. Estimation results from the raw-data analysis (Rouder et al., submitted). Observed effects are depicted by the gray line, posterior estimates are given by the points, credible intervals are the gray areas around the points. There is some hierarchical shrinkage to the overall effect. C. Estimation results from the Fisher's $Z$ analysis. The $Z$ values have a larger range than the observed effects. There is again some hierarchical shrinkage so that all posterior estimates of $\\theta_i$ are postitive in value.", echo = F}
+layout(matrix(c(0, 1, 0, 2, 2, 2, 3, 3, 3), ncol = 3, byrow = T)
+       , widths = c(.2, .6, .2))
+par(mgp = c(2, .7, 0), mar = c(4.1, 4.1, 3.1, 2.1))
+
+plot(effects, zs
+     , pch = 20, col = adjustcolor("slateblue", alpha.f = .6)
+     , ylab = expression("Fisher's" ~ z)
+     , xlab = expression("Effect" ~ d ~ "(ms)")
+     , axes = F
+     , main = "A."
+     , frame.plot = F
+     , xlim = c(-.2, .4)
+     , ylim = c(-.2, .4)
+     , xaxt = "n"
+     )
+# axis(1, at = seq(-.1, .2, .1), labels = seq(-.1, .2, .1) * 1000)
+# axis(2, at = c(-.1, seq(0, .4, .2)), labels = c(-.1, seq(0, .4, .2)))
+abline(0, 1, lty= 1, col = "dimgray")
+abline(h = 0, lty = 1, col = "dimgray")
+abline(v = 0, lty = 1, col = "dimgray")
+axis(1, at = seq(-.2, .4, .2), labels = seq(-.2, .4, .2)*1000)
+axis(2, at = c(-.2, seq(0, .4, .2)), labels = c(-.2, seq(0, .4, .2)))
+
+##Regular analysis results figure
+
+order.ef <- order(effects)
+cis <- res.est[, c("lower", "upper")]
+
+plot(
+       effects[order.ef]
+       # , ylim = c(-.2, .4)
+       , type = "l"
+       , col = "gray50"
+       , ylab = expression(d[i] ~ and ~ theta[i])
+       , xlab = "Studies"
+       , frame.plot = FALSE
+       , xaxt = 'n'
+       # , yaxt = 'n'
+       , main = "B. Analysis With All Data"
+  )
+  # title(main, line = -1)
+  axis(side = 1
+       , at = c(1, max(order.ef))
+  )
+  # axis(side = 2, at = seq(-.2, .4, .2)
+  # )
+  polyCI(upper = cis[order.ef, 2], lower =  cis[order.ef, 1], col = "gray85")
+  
+  abline(h = 0, col = "gray40")
+  
+  lines(effects[order.ef]
+         , col = "gray65"
+        , lwd = 2)
+  
+  points(res.est[order.ef, "center"]
+         , col = "darkslateblue"
+         , pch = 19
+         )
+
+####Fisher's z results figure
+pm2 <- colMeans(sim2.theta[keep,]) 
+
+order.ef <- order(zs)
+cis <- t(apply(sim2.theta[keep,], 2, quantile, probs = c(.025, .975)))
+
+plot(
+       zs[order.ef]
+       # , ylim = c(-.2, .4)
+       , type = "l"
+       , col = "gray50"
+       , ylab = expression(Z[i] ~ and ~ theta[i])
+       , xlab = "Studies"
+       , frame.plot = FALSE
+       , xaxt = 'n'
+       # , yaxt = 'n'
+       , main = "C. Analysis With Fisher's Z"
+  )
+  # title(main, line = -1)
+  axis(side = 1
+       , at = c(1, max(order.ef))
+  )
+  # axis(side = 2, at = seq(-.2, .4, .2)
+  # )
+  polyCI(upper = cis[order.ef, 1], lower =  cis[order.ef, 2], col = "gray85")
+  
+  abline(h = 0, col = "gray40")
+  
+  lines(zs[order.ef]
+         , col = "gray65"
+        , lwd = 2)
+  
+  points(pm2[order.ef]
+         , col = "darkslateblue"
+         , pch = 19
+         )
+```
+
+<!-- Sensitiviy Analysis -->
+
+```{r sens-1, cache = T}
+mu.theta <- 0:(M - 1)
+theta <- matrix(nrow = M, ncol = I)
+
+s2.theta <- 1:M
+s2.mu.th <- 1:M
+
+theta[1, ] <- 0
+
+s2.theta[1] <- .05
+s2.mu.th[1] <- .1
+
+a.theta <- 2
+b.theta <- .01
+a.mu <- 2
+b.mu <- .01
+
+for(m in 2:M){
+  
+  #theta
+  c <- z * (ni - 3) + mu.theta[m-1] / (s2.theta[m-1])
+  v <- 1/(ni - 3 + 1 / (s2.theta[m-1]))
+  theta[m, ] <- rnorm(I, c * v, sqrt(v))
+  
+  #mu.theta
+  c <- sum(theta[m,])/(s2.theta[m-1])
+  v <- 1/(I/(s2.theta[m-1]) + 1/(s2.mu.th[m-1]))
+  mu.theta[m] <- rnorm(1, c * v, sqrt(v))
+  
+  # #s2s
+  scale <- sum((theta[m, ] - mu.theta[m])^2) / 2
+  s2.theta[m] <- rinvgamma(1, a.theta + I/2, scale + b.theta)
+
+  scale <- mu.theta[m]^2 / (2)
+  s2.mu.th[m] <- rinvgamma(1, a.mu + .5, scale + b.mu)
+  
+}
+
+sens1.theta <- theta
+set1 <- c(a.theta, b.theta, a.mu, b.mu)
+
+bfs.sens1 <- get.bfs(zs, ni, sens1.theta[keep,], priors = set1)
+
+# plot(xs, 2*dinvgamma(xs^2, 1, .01), type = "l")
+# bfs.sens1
+```
+
+
+```{r sens-2, cache = T}
+mu.theta <- 0:(M - 1)
+theta <- matrix(nrow = M, ncol = I)
+
+s2.theta <- 1:M
+s2.mu.th <- 1:M
+
+theta[1, ] <- 0
+
+s2.theta[1] <- .05
+s2.mu.th[1] <- .1
+
+a.theta <- 2
+b.theta <- .01
+a.mu <- 1
+b.mu <- .01
+
+for(m in 2:M){
+  
+  #theta
+  c <- z * (ni - 3) + mu.theta[m-1] / (s2.theta[m-1])
+  v <- 1/(ni - 3 + 1 / (s2.theta[m-1]))
+  theta[m, ] <- rnorm(I, c * v, sqrt(v))
+  
+  #mu.theta
+  c <- sum(theta[m,])/(s2.theta[m-1])
+  v <- 1/(I/(s2.theta[m-1]) + 1/(s2.mu.th[m-1]))
+  mu.theta[m] <- rnorm(1, c * v, sqrt(v))
+  
+  # #s2s
+  scale <- sum((theta[m, ] - mu.theta[m])^2) / 2
+  s2.theta[m] <- rinvgamma(1, a.theta + I/2, scale + b.theta)
+
+  scale <- mu.theta[m]^2 / (2)
+  s2.mu.th[m] <- rinvgamma(1, a.mu + .5, scale + b.mu)
+  
+}
+
+sens2.theta <- theta
+set2 <- c(a.theta, b.theta, a.mu, b.mu)
+
+bfs.sens2 <- get.bfs(zs, ni, sens2.theta[keep,], priors = set2)
+
+# plot(xs, 2*dinvgamma(xs^2, 1, .01), type = "l")
+# bfs.sens1
+```
+
+```{r sens-3, cache = T}
+mu.theta <- 0:(M - 1)
+theta <- matrix(nrow = M, ncol = I)
+
+s2.theta <- 1:M
+s2.mu.th <- 1:M
+
+theta[1, ] <- 0
+
+s2.theta[1] <- .05
+s2.mu.th[1] <- .1
+
+a.theta <- .5
+b.theta <- .01
+a.mu <- .5
+b.mu <- .02
+
+for(m in 2:M){
+  
+  #theta
+  c <- z * (ni - 3) + mu.theta[m-1] / (s2.theta[m-1])
+  v <- 1/(ni - 3 + 1 / (s2.theta[m-1]))
+  theta[m, ] <- rnorm(I, c * v, sqrt(v))
+  
+  #mu.theta
+  c <- sum(theta[m,])/(s2.theta[m-1])
+  v <- 1/(I/(s2.theta[m-1]) + 1/(s2.mu.th[m-1]))
+  mu.theta[m] <- rnorm(1, c * v, sqrt(v))
+  
+  # #s2s
+  scale <- sum((theta[m, ] - mu.theta[m])^2) / 2
+  s2.theta[m] <- rinvgamma(1, a.theta + I/2, scale + b.theta)
+
+  scale <- mu.theta[m]^2 / (2)
+  s2.mu.th[m] <- rinvgamma(1, a.mu + .5, scale + b.mu)
+  
+}
+
+sens3.theta <- theta
+set3 <- c(a.theta, b.theta, a.mu, b.mu)
+
+bfs.sens3 <- get.bfs(zs, ni, sens3.theta[keep,], priors = set3)
+
+# plot(xs, 2*dinvgamma(xs^2, .5, .02), type = "l")
+# bfs.sens1
+```
+
+```{r sens-4, cache = T}
+mu.theta <- 0:(M - 1)
+theta <- matrix(nrow = M, ncol = I)
+
+s2.theta <- 1:M
+s2.mu.th <- 1:M
+
+theta[1, ] <- 0
+
+s2.theta[1] <- .05
+s2.mu.th[1] <- .1
+
+a.theta <- 2
+b.theta <- .01
+a.mu <- .5
+b.mu <- .02
+
+for(m in 2:M){
+  
+  #theta
+  c <- z * (ni - 3) + mu.theta[m-1] / (s2.theta[m-1])
+  v <- 1/(ni - 3 + 1 / (s2.theta[m-1]))
+  theta[m, ] <- rnorm(I, c * v, sqrt(v))
+  
+  #mu.theta
+  c <- sum(theta[m,])/(s2.theta[m-1])
+  v <- 1/(I/(s2.theta[m-1]) + 1/(s2.mu.th[m-1]))
+  mu.theta[m] <- rnorm(1, c * v, sqrt(v))
+  
+  # #s2s
+  scale <- sum((theta[m, ] - mu.theta[m])^2) / 2
+  s2.theta[m] <- rinvgamma(1, a.theta + I/2, scale + b.theta)
+
+  scale <- mu.theta[m]^2 / (2)
+  s2.mu.th[m] <- rinvgamma(1, a.mu + .5, scale + b.mu)
+  
+}
+
+sens4.theta <- theta
+set4 <- c(a.theta, b.theta, a.mu, b.mu)
+
+bfs.sens4 <- get.bfs(zs, ni, sens4.theta[keep,], priors = set4)
+
+# plot(xs, 2*dinvgamma(xs^2, .5, .02), type = "l")
+# bfs.sens1
+```
+
+```{r sens-5, cache = T}
+mu.theta <- 0:(M - 1)
+theta <- matrix(nrow = M, ncol = I)
+
+s2.theta <- 1:M
+s2.mu.th <- 1:M
+
+theta[1, ] <- 0
+
+s2.theta[1] <- .05
+s2.mu.th[1] <- .1
+
+a.theta <- .5
+b.theta <- .01
+a.mu <- 2
+b.mu <- .02
+
+for(m in 2:M){
+  
+  #theta
+  c <- z * (ni - 3) + mu.theta[m-1] / (s2.theta[m-1])
+  v <- 1/(ni - 3 + 1 / (s2.theta[m-1]))
+  theta[m, ] <- rnorm(I, c * v, sqrt(v))
+  
+  #mu.theta
+  c <- sum(theta[m,])/(s2.theta[m-1])
+  v <- 1/(I/(s2.theta[m-1]) + 1/(s2.mu.th[m-1]))
+  mu.theta[m] <- rnorm(1, c * v, sqrt(v))
+  
+  # #s2s
+  scale <- sum((theta[m, ] - mu.theta[m])^2) / 2
+  s2.theta[m] <- rinvgamma(1, a.theta + I/2, scale + b.theta)
+
+  scale <- mu.theta[m]^2 / (2)
+  s2.mu.th[m] <- rinvgamma(1, a.mu + .5, scale + b.mu)
+  
+}
+
+sens5.theta <- theta
+set5 <- c(a.theta, b.theta, a.mu, b.mu)
+
+bfs.sens5 <- get.bfs(zs, ni, sens5.theta[keep,], priors = set5)
+
+# plot(xs, 2*dinvgamma(xs^2, .5, .02), type = "l")
+# bfs.sens1
+```
+

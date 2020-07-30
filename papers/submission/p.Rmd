@@ -1,0 +1,588 @@
+---
+title             : "Does Every Study? Implementing Ordinal Constraint in Meta-Analysis"
+shorttitle        : "Ordinal Constraint in Meta-Analysis"
+
+author: 
+  - name          : "Julia M. Haaf"
+    affiliation   : "1"
+    corresponding : yes    # Define only one corresponding author
+    address       : "Postbus 15906, 1001 NK AMSTERDAM, The Netherlands"
+    email         : "j.m.haaf@uva.nl"
+  - name          : "Jeffrey N. Rouder"
+    affiliation   : "2"
+
+affiliation:
+  - id            : "1"
+    institution   : "University of Amsterdam"
+  - id            : "2"
+    institution   : "University of California-Irvine"
+
+authornote: |
+  Julia M. Haaf, Psychological Methods Unit, University of Amsterdam, Amsterdam, Netherlands; Jeffrey N. Rouder, Department of Cognitive Sciences, University of California, Irvine, USA.
+
+  We are indebted to Sho Tsuji and Julia Carbajal for letting us use their familiar-word-recognition meta-analysis and for helping us make sense of the interpretation of the findings. We thank Paul Speckman and Quentin Gronau for insightful discussions about variable transformations and meta-analysis. This manuscript and analysis code are available at XXX.
+
+abstract: |
+  The most prominent goal when conducting a meta-analysis is to estimate the true effect size across a set of studies. This approach is problematic whenever the analyzed studies are inconsistent, i.e. some studies show an effect in the predicted direction while others show no effect and still others show an effect in the opposite direction. In case of such an inconsistency, the average effect may be a product of a mixture of mechanisms. The first question in any meta-analysis should therefore be whether all studies show an effect in the same direction. To tackle this question a model with multiple ordinal constraints is proposed - one constraint for each study in the set. This "every study" model is compared to a set of alternative models, such as an unconstrained model that predicts effects in both directions. If the ordinal constraints hold, one underlying mechanism may suffice to explain the results from all studies. A major implication is then that average effects become interpretable. We illustrate the model-comparison approach using Carbajal et al.'s (2020) meta-analysis on the familiar-word-recognition effect, show how predictor analyses can be incorporated in the approach, and provide R-code for interested researchers. As common in meta-analysis, only surface statistics (such as effect size and sample size) are provided from each study, and the modeling approach can be adapted to suit these conditions. 
+  
+keywords          : "keywords"
+wordcount         : "X"
+
+bibliography      : ["lab.bib", "r-references.bib"]
+
+figsintext        : no
+figurelist        : no
+tablelist         : no
+footnotelist      : no
+lineno            : no
+mask              : no
+
+header-includes:
+  - \usepackage{mathrsfs}
+  - \usepackage[makeroom]{cancel}
+  - \usepackage{pcl}
+  - \usepackage{setspace}\doublespacing
+  - \usepackage{marginnote}
+  - \newcommand{\readme}[1]{\emph{\marginnote{Julia} (#1)}}
+  - \usepackage{pifont}
+
+class             : "man"
+output            : papaja::apa6_pdf
+csl               : apa6.csl
+---
+
+```{r setup, include=FALSE, echo = F}
+set.seed(666)
+
+# knitr::opts_chunk$set(echo = TRUE)
+
+library('msm')
+library("MCMCpack")
+library("psych")
+library("papaja")
+library("metafor")
+library("ggplot2")
+library("truncdist")
+library("spatialfil")
+library("tmvtnorm")
+library("mvtnorm")
+library("scam")
+
+theme_set(theme_apa(base_size = 10))
+# Hack to overcome ggplot2 bug (https://github.com/tidyverse/ggplot2/issues/2058)
+assignInNamespace("theme_nothing", function() { theme_void() + theme(axis.text.x = NULL, axis.text.y = NULL, axis.line.x = element_blank(), axis.line.y = element_blank()) }, "cowplot")
+```
+
+The common goals in meta-analysis are to measure a meta-analytic mean, and to assess how this mean depends on covariates. For example, we may want to know whether infants can distinguish familiar words from novel words [@Carbajal:etal:2020]. The common method to study infant word recognition is to present familiar and novel words, and to measure the difference in either looking times or head turns. Because the data are relatively expensive in infant research, meta-analysis is an important tool to gain more precision. Using meta-analysis, the overall familiar-word-recognition effect can be assessed across a set of studies, and the variable age, for example, could serve as a covariate for theoretical development and guidance of future studies.
+
+Although targeting meta-analytic means may seem uncontroversial, we have previously argued alternative targets are more appropriate [@Rouder:etal:2019b]. We started with the observation that for many experimental paradigms positive, zero, and negative effects correspond to different psychological phenomena. For the familiar-word-recognition effect these three domains - negative, null, positive - correspond to different stages in early language development [@Halle:Boysson:1994]. During the first few months babies do not distinguish familiar words and rare or novel words, and studies investigating the familiar-word-recognition effect with up to 11 month old infants may expect a zero effect. During the next stage of language development, infants may pay more attention to familiar words than novel ones resulting in an expected positive familiar-word-recognition effect. After around 20 months processing of words changes again, and infants may even pay more attention to novel words [@Halle:Boysson:1994]. This distinction between negative, zero, and positive effects poses a problem for conventional meta-analysis. Imagine you had an effect size of 0.4 in one study, and of -0.2 in another. How well does the average of 0.1 describe the two studies? Can we conclude that there is a small positive familiar-word-recognition effect where babies pay more attention to familiar words than novel words?
+
+Motivated by the concern that qualitatively different outcomes correspond to different psychological processes @Rouder:etal:2019b recommend assessing whether all true study effects are in the same qualitative region. The distinction between true and observed effects is critical here. A true effect is a study's underlying latent effect, and if the study had infinitely many trials and participants we could observe its true effect. In reality though, we only observe a limited number of trials and participants, and this limited knowledge introduces sample noise. The observed effect is therefore a combination of the true effect and sample noise. Sample noise increases the variability of a collection of observed effects in that observed effects are more variable than true effects. To separate sample noise and true variability @Rouder:etal:2019b used hierarchical modeling. This tool allows to take sample noise into account, and to answer questions about the collection of true effects.
+
+If all true effects are plausibly in the same direction the average across these effects is much more interpretable as an overall effect of common phenomenology. Conversely, if true effects are in opposite directions, the average in uninterpretable. This issue is discussed in the clinical literature as *quantitative* vs. *qualitative interactions* [@Gail:Simon:1985; @Pan:Wolfe:1997]. In a clinical setting, qualitative interaction refers to the case that one treatment is superior for one patient population, and another treatment is superior for another patient population. In this case, recommendation for treatment has to be qualified by the target population. @Gail:Simon:1985 propose testing for qualitative interactions in meta-analysis, and @Higgins:etal:2009 discuss Bayesian estimation-based methods for such a test. We call testing for qualitative interactions a *does-every-study meta-analysis*.
+
+One of the main contributions of @Rouder:etal:2019b is a Bayesian model-comparison method of determining whether a set of studies plausibly share a common phenomenology. There are three obvious constrained models to consider: A *positive-effects model* where all true study effects are constrained to be positive, a *negative-effects model* where all true study effects are constrained to be negative, and a *null model* where all study effects are constrained to be exactly zero. The alternative to these constrained models is a mixture where some studies are negative, positive, and null. @Rouder:etal:2019b called this mixture the *unconstrained model*. Knowing whether the unconstrained model holds or whether one of the constrained models hold is critical for understanding any psychological phenomenon, and to determine the required theoretical complexity. The four models will be developed subsequently.
+
+The approach by @Rouder:etal:2019b is based on the development by @Haaf:Rouder:2017 for Bayesian model comparison, and the required inputs for the hierarchical models assessed are the raw, participant-level data from each study. There are four concerns with this approach when applied to meta-analysis: First, while there are some examples of collections of studies where raw data are available [e.g. @Ebersole:etal:2016; @Corker:etal:2017; @Wagenmakers:etal:2016b], the vast majority of meta-analyses is based on published summary statistics rather than raw data. Second, in many meta-analyses the dependent measures and designs vary across studies. For example, dependent variables may be accuracy in some studies, and response times in others. Third, the development in @Rouder:etal:2019b is best suited for experimental settings and not for correlational designs. Fourth, one of the major goals of meta-analysis, assessing the effect of study-level predictor variables, was not yet addressed. In sum, the model comparison approaches that we previously advocated were simply not developed for common meta-analyses where designs and scales vary, and where data extraction relies on published information. To increase the applicability of the does-every-study meta-analysis, here we describe models for the effect size measure Fisher's $Z$ because Fisher's $Z$ can be calculated from extant summary statistics. The current development should be widely applicable.
+
+In the next section, we present the collection of formal does-every-study models that we subsequently compare. Following that, we develop meta-regression approaches to understand whether covariates affect the underlying phenomenology. We apply the does-every-study analysis to meta-analytic data on the familiar-word-recognition effect reported by @Carbajal:etal:2020. We discuss the importance of prior settings for Bayesian meta-analysis, limitations of the methods, and future directions of does-every-study modeling.
+
+# Does-Every-Study Models
+
+First, we need to specify what are considered the data for the does-every-study models. This choice is limited by the information available in published articles. We decided to use the effect-size estimate Fisher's $Z$ which is typically used to assess the size of a correlation coefficient. The measure is a variance stabilizing transformation of the bivariate correlation coefficient $r$ that maps $r$ onto the real number space. The formula for Fisher's $Z$ is 
+
+\begin{align}\label{eq:Zcalc}
+Z = \frac{1}{2} \, \ln\Big(\frac{1 + r}{1 - r}\Big) = \mbox{arctanh}(r),
+\end{align}
+
+and the asymptotic distribution of $Z$ is a normal distribution:
+
+\begin{align}\label{eq:fishersZ}
+Z \sim \mbox{Normal}(\theta, \frac{1}{N - 3}),
+\end{align}
+
+where $\theta$ is the true effect size and $N$ is the number of observations. Importantly, the size of the correlation does not affect the variance of $Z$; the variance is only dependent on $N$. This property makes Fisher's $Z$ an attractive target for the modeling approach. In the Appendix, we provide a proof showing that this beneficial property of Fisher's $Z$ also holds for biserial correlations, and the modeling approach is therefore equally suitable for experimental settings with condition as the predictor. 
+
+To learn about the sign and variability of effects models are placed on the collection of study effects much like in what is often called random-effects meta-analysis. For the following models, let $i$ denote the study, $i = 1, \ldots, I$. The base model here is 
+
+\begin{equation}\label{eq:basemodel}
+Z_i \sim \mbox{Normal}\Big(\theta_i, \frac{1}{N_i - 3}\Big),
+\end{equation}
+
+where $\theta_i$ is the $i$th study's true $Z$-value. We may place models with ordinal and equality constraints on the collection of these true study effects $\theta_i$. 
+
+### The Unconstrained Model
+
+The unconstrained model is a standard linear model without constraints, and it corresponds to the typical random-effects meta-analytic model. Here, the collection of study effects simply follows a normal distribution:
+
+\[
+\begin{array}{llr}
+\calM_u: && \theta_i \stackrel{iid}{\sim} \mbox{Normal}(\mu,\tau^2),\\
+\end{array}
+\]
+
+where $\mu$ is the mean effect and $\tau^2$ is the variance of effects. No constraints are placed on the collection of $\theta_i$ such that effects for some studies may truly be positive while effects for other studies may truly be negative. 
+
+### The Positive-Effects Model
+
+The positive-effects model corresponds to the hypothesis that every study has a true effect in the same, expected direction:
+
+\[
+\begin{array}{llr}
+\calM_p: && \theta_i \stackrel{iid}{\sim} \mbox{Normal}^+(\mu,\tau^2),\\
+\end{array}
+\]
+
+where $\mbox{Normal}^+$ is a normal distribution truncated below at zero. The positive domain of the model translates to the idea that effects are coded so that positive is the expected direction. This model statement implies multiple ordinal constraints, one for each study in the data set, reducing model complexity drastically compared to the unconstrained model. Assuming the same mean and variance as the general model, the positive-effects model has higher density for (small) positive effects and no mass below zero.
+
+### The Common-Effect Model
+
+The common-effect model corresponds to the frequentist fixed-effect meta-analytic model [@Borenstein:etal:2010]. For the common-effect model, all $\theta_i$ have the same value:
+
+\[
+  \begin{array}{llr}
+\calM_c: && \theta_i = \mu, \mu > 0.\\
+\end{array}
+\]
+
+Here, the common effect, $\mu$, is restricted to be in the expected direction, just like in the positive-effects model.
+
+The common-effect model may seem unlikely, and there has been much philosophical and statistical debate about the usefulness of meta-analytic common-effect models [e.g. @Hedges:Vevea:1998]. Surely, there must be some variability between true effects across studies. Yet, especially in meta-analysis, this model may be a necessary addition to the set of models proposed. @Borenstein:etal:2010 note, for example, that between study variability may be hard to estimate with small numbers of studies in a data set. Also, the common effect assumption may be meaningful when the experiments where pre-planned to use the exact same methods across labs. This pre-planning is common in medical research, and it recently gained attention in psychological research with the many-labs projects [@Ebersole:etal:2016]. In fact, @Rouder:etal:2019b report evidence for this model for Ebersole and colleagues' many-labs study on moral credentialism.
+
+### The Null Model
+
+The last model proposed is a null model. Here, all $\theta_i$ are exactly zero:
+
+\[
+  \begin{array}{llr}
+\calM_0: && \theta_i = 0.\\
+\end{array}
+\]
+
+This model is the most constrained model of the set, and it is a strict null in that it does not allow for true variability around zero. Instead, all variation must be captured in the noise term $\frac{1}{N_i - 3}$. If an effect truly does not exist, then all studies truly should have a null result. True variation around zero would imply that there has to be a trade-off between the studies such that all true effects sum to zero, which is highly unlikely and violates the independence assumption of the data. \readme{Did we say this anywhere?}
+
+### Prior Settings
+
+For Bayesian analysis, priors are needed on the mean and variance parameters. Here, prior distributions are placed on $\mu$, the true mean effect size, and on $\tau^2$, the true variability of effect sizes. We chose conjugate prior distributions:
+
+\begin{align*}
+\mu &\sim \mbox{Normal}(0, 0.15^2),\\
+\tau^2 &\sim \mbox{Inverse-Gamma}(1, 0.02).
+\end{align*}
+
+The priors on $\mu$ and $\tau^2$ are critical for model comparison because they differ between the models. For example, the common-effect model constrains $\tau^2$ to zero. Therefore, the prior settings have to be chosen with care. Typically, these settings should be made by researchers familiar with the scaling of the dependent variable [@Haaf:Rouder:2017; @Rouder:etal:2018]. Here, the random variable is effect size, and one might think the scaling is obvious. Yet, we note here that different measures of effect size have different scaling, and an intuition for expected ranges of, say Cohen's $d$ may not be helpful when developing models for Fisher's $Z$. We believe that the current settings are appropriate for many applications in psychology. Nevertheless, a sensitivity analysis for varying prior settings is crucial to assess whether the variability of Bayes factor model comparison results are reasonable. We provide more discussion on the issue and a sensitivity analysis subsequently.
+
+# Model Comparison
+
+The main purpose of the modeling approach is to draw inference about the distribution of study effects. 
+To do so, we propose a Bayes factor model comparison approach to compare the unconstrained model, the positive-effects model, the common-effect model, and the null model. Here, we provide an informal discussion of Bayes factors, and we briefly present the approaches used to estimate Bayes factors between the models. A more extensive discussion may be found in @Jeffreys:1961, @Kass:Raftery:1995, @Morey:etal:2016, and @Rouder:etal:2016b.
+
+In Bayesian model comparison, the main target of interest is the relative evidence for one model compared to another. The Bayes factor is this relative evidence, and it results directly from Bayes rule. Bayes rule for two models, $\calM_1$ and $\calM_2$ is
+
+\begin{equation}\label{bayesrule}
+\frac{P(\calM_1 \mid \bfY)}{P(\calM_2 \mid \bfY)} = \frac{P(\bfY \mid \calM_1)}{P(\bfY \mid \calM_2)} \times \frac{P(\calM_1)}{P(\calM_2)},
+\end{equation}
+
+where $\frac{P(\calM_1 \mid \bfY)}{P(\calM_2 \mid \bfY)}$ are the posterior odds, $\frac{P(\calM_1)}{P(\calM_2)}$ are the prior odds, and $\frac{P(\bfY \mid \calM_1)}{P(\bfY \mid \calM_2)}$ is the Bayes factor. The Bayes factor is also referred to as the updating factor because it is the amount by which the prior odds need to be updated in the light of the data to get to the posterior odds. 
+
+<!-- The Bayes factor is therefore the evidence for $\calM_1$ relative to $\calM_2$. -->
+
+```{r fig-modelcomp, child="figures/modelcomp.Rmd"}
+```
+
+We may also view the Bayes factor as *predictive accuracy* of Model $\calM_1$ relative to the predictive accuracy of Model $\calM_2$. In this sense, the Bayes factor denotes how well $\calM_1$ predicted the observed data compared to $\calM_2$. Figure\ \@ref(fig:meta-modelcomp) illustrates this point. Panel A shows the model specifications for the positive-effects and the unconstrained model for any one study's true effect. The predictions for observed effect sizes from these models are illustrated in panel B. As can be seen, the positive-effects model best predicts positive effects while the general model predicts both positive and negative effects to the same degree. As a result, if a positive effect is observed, the positive-effects model will be preferred as it has more density for positive effects than the general model. In contrast, if a negative effect is observed the general model will be preferred. Yet, the positive-effects model *can* predict small negative effects despite the ordinal constraint on true effects. As a side note, it is a major advantage of Bayesian analysis to allow for the calculation of predictions from a model *before* observing any data. In the frequentist setting, predictions are always based on observed data, for example using cross-validation [@Rouder:etal:2016b].
+
+How do the model predictions extend to more than one study effect? Figure\ \@ref(fig:meta-modelcomp) shows multivariate model specifications for two studies for both the unconstrained and the positive-effects model. Panels C and D show model specification and model prediction for the positive-effects model. The effect size for Study 1 is specified on the x-axis; the effect size for Study 2 is specified on the y-axis. The correlation between the two effects is introduced by the hierarchical nature of the models (i.e. the common variability of the mean effect), and it is a desirable feature of hierarchical modeling. This correlation is also preserved in the predictions, and the positive-effects model best predicts small, similar, positive effects. The predictions of the unconstrained model are shown in Figure\ \@ref(fig:meta-modelcomp)F. The model predictions again cover more of the parameter space than the predictions of the positive-effects model leading to relatively less predictive accuracy for observed positive effects.
+
+Conceptually, Bayes factors can be understood as a comparison between the prediction in panels D anf F in Figure\ \@ref(fig:meta-modelcomp). If we observed effects for the two studies, say $z_1 = .2$ and $z_2 = .25$, then we may compare the predictive accuracy for the point $[.2, .25]$ of the two bottom-right graphs. The ratio of the predictive accuracies at the observed data point is the Bayes factor between the two models. 
+
+Practically, Bayes factors can be estimated in several ways. Here, we use the encompassing approach to estimate the Bayes factor between the unconstrained model and the positive-effects model [@Hoijtink:2012; @Klugkist:etal:2005; @Haaf:Rouder:2017], and an analytic approach to assess the Bayes factor between the unconstrained model, the common-effect model, and the null model [@Rouder:etal:2012]. The Bayes factors between the positive-effects model, the common-effect model, and the null model can be obtained using the transitivity property of Bayes factors.^[Using transitivity, the Bayes factor between the positive-effects model and the null model, $B_{+0}$, may be obtained as $B_{+0} = \frac{B_{g0}}{B_{g+}}$.]
+
+The encompassing approach [@Hoijtink:2012] may be used to estimate Bayes factors between nested models, where one model is an order-constrained version of an encompassing model. This is the case for the unconstrained and positive-effects models. The Bayes factor is
+
+\[
+B_{u+} = \frac{P(\bftheta > \bf0 | \calM_u)}{P(\bftheta > \bf0 | \bfY, \calM_u)},
+\]
+
+where $\bftheta$ is an $I$-dimensional vector containing $\theta_i$, and $\bfY$ are the observed data. The numerator of the right-hand-side denotes the probability that all $\theta_i$ are positive before seeing the data under the unconstrained model, and the denominator denotes the same quanitity for the posterior of the unconstrained model. Using the encompassing approach, the Bayes factor can be estimated using samples from the posterior and prior distributions of the unconstrained model $\calM_u$. Using MCMC-estimation, we may sample $M$ samples from the prior and posterior distributions of $\theta_i$ with $m$ indicating sample, $m = 1, \ldots, M$. The $m$th sample is evidential of the positive-effects model if all $\theta_i$ are positive. Let $n_{0+}$ indicate the frequency of evidential samples from the prior, and let $n_{1+}$ indicate the frequency of evidential samples from the posterior. Then, the Bayes factor between the general and the positive-effects models is approximately
+
+\[
+B_{u+} \approx \frac{n_{0+}}{n_{1+}}.
+\]
+
+The analytic approach employed here is based on @Rouder:etal:2012. The main targets of the approach are the probability of data conditional on the two models marginalized over the parameter space. This probability is typically called the marginal probability of a model, and it may be expressed using The Law of Total Probability as
+\begin{equation} \label{eq:bfInt}
+P(\bfY \mid \calM) = \int_{\bfxi \in \Xi} P(\bfY|\bfxi)P(\bfxi)d\bfxi,
+\end{equation}
+where $\bfxi$ is a vector of parameters from parameter space $\Xi$. The likelihood function, $P(\bfY|\bfxi)$, is given by Equation\ \@ref(eq:basemodel), and it is the product of normal densities with mean $\theta_i$ and variance $\frac{1}{n_i - 3}$ evaluated for the data. 
+
+Here, we illustrate the analytic approach for obtaining the Bayes factor between the null model and the unconstrained model. For the null model, obtaining the marginal probability is straight-forward. The parameter space of $\theta_i$ is reduced to a point, to zero. The integral in Equation \@ref(eq:bfInt) is simply the likelihood of the data when $\theta_i = 0$ for all $i$. For the unconstrained model, the integral in Equation \@ref(eq:bfInt) may be simplified by integrating out the collection of $\theta_i$ and the overall effect $\mu$. The likelihood of $Z_i$ marginal over $\theta_i$ and $\mu$ is
+
+\[Z_i | \tau^2, \sigma^2_\mu \sim \mbox{Normal}(0, \frac{1}{n_i - 3} + \tau^2 + \sigma^2_\mu),\]
+
+where $\tau^2$ is the variance of $\theta_i$ and $\sigma^2_\mu$, the variance of $\mu$ that is here fixed at $.15^2$. The integral is now reduced to one dimension. To estimate $P(\bfY \mid \calM)$ the integral can be  evaluated for possible values of $\tau^2$ based on its prior distribution. The marginal probability can be estimated in similar fashion for the common-effect model. 
+
+
+```{r, eval = F}
+### Unconstrained model
+R <- 100000
+s2_mu <- rinvgamma(R, 2, .01)
+s2_theta <- rinvgamma(R, 2, .01)
+get.log.likeli.g <- function(s2, z, n){ #s2 = vector of s2_mu and s2_theta
+  sum(dnorm(z, 0, sqrt(1/(n - 3) + s2[1] + s2[2]), log = T))
+}
+
+r.likeli <- apply(cbind(s2_mu, s2_theta), 1, get.log.likeli.g, z = zs, n = ni)
+Mg <- mean(exp(r.likeli))
+
+test <- apply(cbind(s2_mu, s2_theta), 1, function(s2, n){sqrt(1/(n - 3) + s2[1] + s2[2])}, n = ni[1])
+
+### Null model
+
+lM0 <- sum(dnorm(zs, 0, sqrt(1/(ni - 3)), log = T))
+
+Mg / exp(lM0)
+```
+
+# Application: The Familiar-word-recognition Effect
+
+```{r child = "analysis/analysis_carbajal.Rmd", warning=F}
+```
+
+```{r}
+I <- nrow(dat)
+dat$mean_age_months <- dat$mean_age/30
+```
+
+We are now ready to apply the does-everyone meta-analysis to data. Here, we re-analyzed the meta-analysis on the familiar-word-recognition-effect conducted by @Carbajal:etal:2020. The authors gathered `r I` studies from `r length(levels(dat$short_cite))` research articles studying infants with average sample age ranging from `r round(range(dat$mean_age_months))[1]` to `r round(range(dat$mean_age_months))[2]` months. Here, null, positive, and negative effects correspond to different stages in early language development [@Halle:Boysson:1994]. If infants do not distinguish between familiar and unfamiliar words then the familiar-word-recognition effect is zero. If infants pay more attention to familiar words than novel ones then the familiar-word-recognition effect is positive. If infants pay more attention to novel words than familiar words then the familiar-word-recognition effect is negative. The expectation is that infants in the age range of the current studies show a positive familiar-word recognition effect. The analysis by @Carbajal:etal:2020 showed an overall effect size in line with this expectation, $\hat{\mu} = `r round(freqb, 2)`$, $95\%$CI $= `r paste0("[", round(freqci[1], 2), ", ", round(freqci[2], 2), "]")`$.
+
+We first estimated the unconstrained model. The observed and estimated study effect sizes (Fisher's $Z$) are shown in Figure\ \@ref(fig:resFig). The gray squares correspond to the observed effect sizes, and the black points correspond to the estimates from the unconstrained model (posterior means). The gray error bars show the 95% confidence intervals for Fisher's $Z$. The black error bars show 95% credible intervals. The size of the points is determined by the study weights that are in turn dependent on the sample size. These weightsdetermine the impact of each study on the overall effect size. As can be seen, there is a substantial amount of hierarchical shrinkage reducing the variability of estimated study effects as compared to observed study effects. The amount of shrinkage for each study is a function of the standard error of the effect size estimate, which in turn is a function of the sample size. Because the studies in the current meta-analysis have relatively small sample sizes---between `r range(dat$n)[1]` and `r range(dat$n)[2]` participants---as is typical for developmental research, hierarchical shrinkage is expected to substantially pull more extreme values towards the overall effect.
+
+Figure\ \@ref(fig:resFig) also shows that while three studies have an observed negative effect size the estimates for all `r I` studies are positive. To quantify the evidence for or against every-study-does, we compare the models previously proposed using Bayes factors. The preferred model is the positive-effects model, and it is preferred over the common-effect model by `r round(1/bfs.cont$bfs[3] * bfs.cont$bfs[4], 2)` to 1, over the null model by `r round(1/bfs.cont$bfs[3] * bfs.cont$bfs[5], 2)` to 1, and over the unconstrained model by `r round(1/bfs.cont$bfs[3], 2)` to 1. Hence, while there is some evidence that all studies show a positive effect, there is only limited evidence that study effects actually differ.
+
+In summary, it seems that all studies conform with the expectation that infants pay more attention to novel words, but there is only limited evidence for variability of study effects across studies. On of the reasons for the lack of variability is that sample sizes are relatively small in almost all studies. Therefore, each study effect is estimated with a lot of uncertainty, and the common-effect model cannot be ruled out. However, both positive-effects and common-effect models allow for the direct interpretation of the overall effect across studies, estimated as $\hat{\mu} \mid \bfZ = `r round(mean(rec.mutheta), 2)`$, $95\%$CrI $= [`r round(quantile(rec.mutheta, probs = c(.025)), 2)`, `r round(quantile(rec.mutheta, probs = c(.975)), 2)`]$. This estimate can be used to inform the design of future studies. Another goal of meta-analyses, however, is to confirm the effect of predictor variables on the effect size in question. Subsequently, we will show how such predictors can be incorporated in the does-every-study approach.
+
+# Accounting for Predictors
+
+A key goal in meta-analysis is to assess the relationship between a predictor variable and the effect size across studies [@Borenstein:etal:2011]. This is especially relevant if there is substantial between-study variability. Then, researchers might ask whether there are covariates that explain some of this between-study variability. Typically, included covariates are on the study level, for example, the experimental design or the specific choice of dependent variable. The covariate or predictor variable can either be categorical or continuous. 
+
+Here, we consider two cases that are potentially relevant for the question whether every study shows an effect in the same direction. First, we consider meta-regression models and ask whether there are qualitative interactions where studies show opposite effects, and whether there is a covariate that explains the flip. Questions related to the meta-regression approach are: After taking a covariate into account, are all effects positive? If all studies show an effect in the same direction, are all effects in the same direction even when taking a covariate into account? Second, we might ask whether studies on one level of a categorical covariate show an effect in the expected direction while studies on another level of the covariate show no effect. We call this the some-do-some-don't approach. In this section, we propose meta-regression models and a some-do-some-don't model, show how evidence for or against the effect of a predictor can be assessed, and illustrate the approach, where appropriate, by applying these models to the familiar-word-recognition meta-analysis.
+
+## Meta-regression
+
+We start with extending the base model in Equation\ \@ref(eq:basemodel) to include a covariate:
+
+\begin{equation} \label{eq:pred}
+Z_i \sim \mbox{Normal}(\theta_i + x_i \beta, \frac{1}{N_i - 3}),
+\end{equation}
+
+where $x_i$ denotes the covariate for the $i$th study, and $\beta$ denotes the slope. The covariate can be either continuous, and in this case $x_i$ is standardized, or it can be categorical, and in this case $x_i$ is effect-coded. 
+
+For the familiar-word-recognition meta-analysis, we may want to assess the effect of the average age of study samples on the effect size. To do so, we z-standardized age and estimated the model using gibbs sampling. Figure\ \ref{fig:resfig-cont}A shows the resulting estimates and regression line. Observed effects are shrunken towards the regression line. The slope of the estimated regression line is $\beta = `r round(mean(beta_age), 2)`$, 95%CI $= [`r paste0(round(quantile(beta_age, probs = c(0.025, .975)), 2)[1], ", ", round(quantile(beta_age, probs = c(0.025, .975)), 2)[2])`]$. Note that this slope is slightly reduced from the least square error regression line (dashed line). This reduction is due to hierarchical shrinkage of study effect sizes.
+
+```{r resfig-cont, fig.cap= "Comparison of the meta-regression and the intercept-only analysis of age. The x-axes show the standardized average age per study, the y-axes show Fisher's Z effect size estimates. Gray open points are observed effect sizes; blue points are estimated effect sizes from the Bayesian models. A. Results for the meta-regression model. The dashed line corresponds to a simple least squares regression line; the blue line corresponds to the estimated regression line from the Bayesian meta-regression model. B. Results for the intercept-only model. The dashed line corresponds to the average observed effect size; the blue line corresponds to the estimated mean from the Bayesian meta-regression model.", fig.asp=0.5, warning=F}
+layout(matrix(1:2, ncol = 2))
+par(mgp = c(2, .7, 0), mar = c(3,3,2,1))
+
+matplot(x = rbind(dat$mean_age_stand, dat$mean_age_stand), y = rbind(dat$z_calc, colMeans(pred))
+        , type = "l", lty = 1, col = "darkgray", bty = "n"
+        , ylab = "Effect size", xlab = "Standardized Average Age")
+
+points(dat$mean_age_stand, dat$z_calc, pch = 19, col = "white")
+points(dat$mean_age_stand, dat$z_calc, col = "darkgray")
+points(dat$mean_age_stand, colMeans(pred), pch = 19, col = "slateblue")
+
+abline(a = freq.rma.age$b[1,1], b = freq.rma.age$b[2,1], lwd = 2, col = "gray30", lty = 2)
+abline(a = mean(mutheta_age)
+, b = mean(beta_age), lwd = 2, col = "slateblue4")
+mtext("A.", at = -4)
+
+legend("topleft"
+       , legend = c("Observed", "Estimated")
+       , pch = c(1, 19)
+       , col = c("darkgray", "slateblue")
+       , bty = "n")
+
+matplot(x = rbind(dat$mean_age_stand, dat$mean_age_stand), y = rbind(dat$z_calc, colMeans(rec.theta))
+        , type = "l", lty = 1, col = "darkgray", bty = "n"
+        , ylab = "Effect size", xlab = "Standardized Average Age")
+
+points(dat$mean_age_stand, dat$z_calc, pch = 19, col = "white")
+points(dat$mean_age_stand, dat$z_calc, col = "darkgray")
+points(dat$mean_age_stand, colMeans(rec.theta), pch = 19, col = "slateblue")
+
+abline(h = mean(dat$z_calc), lwd = 2, col = "gray30", lty = 2)
+abline(h = mean(rec.mutheta), lwd = 2, col = "slateblue4")
+
+legend("topleft"
+       , legend = c("Observed", "Estimated")
+       , pch = c(1, 19)
+       , col = c("darkgray", "slateblue")
+       , bty = "n")
+mtext("B.", at = -4)
+```
+
+### The Positive-intercepts Approach
+
+The typical procedure to test the effect of a covariate in meta-analysis is to compare a regression model that includes the predictor with a model without that predictor. However, when combining regression models with the does-every-study approach, we impose additional restrictions on parameters. The positive-intercepts approach may be used if there is evidence that some studies show an opposite-to-expected effect. In this case, we want to assess whether the covariate is responsible for the opposing effects. Therefore, after taking $\beta$ into account, we want to know whether $\theta_i$ the study intercepts, are positive. The restriction imposed is similar to the positive-effects model:
+
+\[
+  \begin{array}{llr}
+\calM_{+|\beta}: && \theta_i > 0.\\
+\end{array}
+\]
+
+The comparison most relevant here is therefore between the unconstrained model without predictor and the positive-intercepts model with predictor. For the familiar-word-recognition meta-analysis, we decided not to assess this model comparison because there is no evidence for qualitative study differences.
+
+### The Positive-covariate Approach
+
+Even if there are no opposing study effect sizes as is the case for the familiar-word-recognition meta-analysis, we may still want to assess the effect of a covariate. In this case, the covariate nevertheless may explain some of the variability that otherwise contributes to noise variability. The effect of explained variance is evident in the comparison of Figures\ \ref{fig:resfig-cont}A and B. The estimated effects from the unconstrained base model are much less variable than the estimated effects from the unconstrained meta-regression model. Therefore, it is plausible that the positive-effects model is preferred if no covariate is included because all effect sizes are estimated to be positive, but if a covariate is included some of these effect sizes may become negative. Therefore, we may want to test whether *true effect sizes plausibly are positive even after taking a covariate into account.* To do so, we impose the following constraint:
+
+\[
+  \begin{array}{llr}
+\calM_{+\hat{z}}: && \theta_i + x_i \beta > 0.\\
+\end{array}
+\]
+
+The constraint is posed on the predicted effect size, $\hat{Z}_i$, which combines the study intercept and slope. The constraint implies that the predictor does not affect the qualitative nature of the study effect sizes. We call this model the positive-prediction model.
+
+For the familiar-word-recognition meta-analysis, we computed Bayes factors to compare all previous models without covariate, and added the unconstrained model with covariate and the positive-prediction model. All comparisons are shown in Table\ \@ref(tab:covariate-tab). The preferred model remains the positive-effects model without predictor. The unconstrained model with covariate performs poorest with a Bayes factor of `r round(bfs.cont$bfs[2]/bfs.cont$bfs[3], 2)`-to-one in favor of the positive-effects model. The positive-prediction model, on the other hand, is the second-best model out of the bunch with a Bayes factor of `r round(bfs.cont$bfs[1]/bfs.cont$bfs[3], 2)`-to-one in favor of the positive-effects model. The reason for the discrepancy between the positive-prediction model and the unconstrained model with covariate is the predictive accuracy---the prior probability that all predicted effect sizes given the moderator are positive is fairly low. The positive-prediction model therefore receives a boost in predictive accuracy as compared to the unconstrained model with moderator. Nevertheless, because the effect of age is so small the positive-effects model without moderator is still preferred. 
+
+```{r covariate-tab}
+Model <- c("Unconstrained Model", "Null Model", "Common-effect Model", "Positive-effects Model", "Unconstrained Model with Covariate", "Positive-prediction Model")
+BFs <- round(c(1, rev((1/bfs.cont$bfs))), 2)
+tab <- cbind(Model, BFs)
+colnames(tab) <- c("Model", "Bayes factor")
+apa_table(tab
+          , caption = "Bayes factors for the familiar-word-recognition meta-analysis."
+          , note = "Bayes factors are in comparison to the unconstrained model."
+          , row.names = FALSE)
+```
+
+
+## Some-studies-do-some-don't Approach
+
+For this approach we ask whether a categorical variable predicts whether a study has a positive effect, or whether a study has no effect. For example, we may want to assess the effect of preregistration on effect size, and, based on the consideration of publication bias, predict that studies from registered reports show no effect while unregistered studies show an effect in the predicted direction. We refer to this setup as a *some-studies* model. 
+
+```{r figModerator, fig.cap="Estimates for the covariate model with study type as some-studies covariate. The black points show estimated study effects from the model where some studies have a zero effect as predicted by the moderator (familiar-word-recognition effect as baseline) and some studies have positive effects as predicted by the moderator (familiar-word-recognition effect as main target of interest). For two studies (Bywater, 2004) the moderator was not reported.", fig.asp = 1, fig.width=7, warning=F}
+## Second model
+
+missingdat <- which(is.na(dat$main_or_baseline_study))
+Is <- (1:I.all)[-missingdat]
+Iord <- (1:I.all)[-which(order.ef %in% missingdat)]
+pmmod <- colMeans(mod.theta) 
+cis <- t(apply(mod.theta, 2, quantile, probs = c(.025, .975)))
+order.mod <- rev(order(datmod$z_calc))
+
+x.ind <- ifelse(datmod$main_or_baseline_study == "baseline", 1, 0)
+ind.slab <- (1:length(pmmod))[x.ind == 1]
+varest <- apply(mod.theta, 2, var)
+weight_estimated <-1/varest
+weight_estimated_scaled <- ((4 - 1) * (weight_estimated - min(weight_estimated[ind.slab]))) / (max(weight_estimated[ind.slab]) - min(weight_estimated[ind.slab])) + 2
+weight_estimated_scaled <- ifelse(weight_estimated_scaled == Inf, 3, weight_estimated_scaled)
+
+mat.ord <- cbind(cbind(pmmod, x.ind, cis, datmod$z_calc, weight_estimated_scaled)[order.mod,], line = Iord)
+mat.ord.df <- as.data.frame(mat.ord)
+
+dfBoth <- data.frame(effectSize = c(dat$z_calc[order.ef], mat.ord.df$pmmod),
+                     y = c(1:I.all, mat.ord.df$line - .4),
+                     weight_scaled = c(weight_scaled[order.ef], mat.ord.df$weight_estimated_scaled), 
+                     lower = c(freqcipstudy[order.ef, 1], mat.ord.df$`2.5%`), 
+                     upper = c(freqcipstudy[order.ef, 2], mat.ord.df$`97.5%`),
+                     g = c(rep("Observed", I.all), rep("Estimated", length(Is))))
+dfLab <- data.frame(studyLabels = dat$short_cite[order.ef]
+                    , y <- 1:I.all)
+    
+plot <-  ggplot2::ggplot(dfBoth, ggplot2::aes(x = effectSize, y = y)) +
+         ggplot2::geom_vline(xintercept = 0, linetype = "dotted") +
+         ggplot2::geom_point(ggplot2::aes(shape = as.factor(dfBoth$g), colour = as.factor(dfBoth$g)), size = dfBoth$weight_scaled * .8) +
+         ggplot2::geom_errorbarh(ggplot2::aes(xmin = dfBoth$lower, xmax = dfBoth$upper, colour = as.factor(dfBoth$g)), height = .1, show.legend = FALSE) +
+         ggplot2::scale_y_continuous(breaks = dfLab$y, labels = as.character(dfLab$studyLabels)) +
+         ggplot2::scale_color_manual("", values = c("black", "slategrey"), labels = c("Estimated", "Observed")) +
+         ggplot2::scale_shape_manual("", values = c(16, 15)) +
+         ggplot2::guides(shape = ggplot2::guide_legend(reverse=TRUE, override.aes = list(size=3)), colour = ggplot2::guide_legend(reverse=TRUE)) +
+         ggplot2::theme(axis.text.y.right = ggplot2::element_text(colour = c(rep(c("slategrey", "black"), each = I.all)))) +
+         ggplot2::xlab(expression("Z and "*theta)) +
+         ggplot2::ylab(" ")
+plot
+```
+
+With the base model from Equation\ \@ref(eq:basemodel) the some-studies model can be placed on $\theta_i$:
+
+\[
+\begin{array}{llr}
+\calM_{ss}: && \begin{cases}
+\theta_i \stackrel{iid}{\sim} \mbox{Normal}^+(\mu,\tau^2) \quad \mbox{if} \; x_i = 1,\\
+\theta_i = 0 \quad \quad \quad \quad \quad \quad \quad \; \mbox{if} \; x_i = 0.
+\end{cases}
+\end{array}
+\]
+
+where $x_i$ is an dummy variable indicating whether the covariate predicts an effect ($x_i = 1$) or no effect ($x_i = 0$). Note that this model is quite constrained: Not only does it predict the direction of the effect for some studies, it also predicts zero-effects for other studies, and it *a priori* assigns each study to either of the two categories. Therefore, if study effects show a pattern similar to the predicted (i.e. the covariate predicts considerable increase of effect sizes) the predictive accuracy of the model is high.
+
+In the meta-analysis on familiar-word-recognition the covariate of study use could be considered as a some-studies predictor. In correspondence with the authors [@Carbajal:etal:2020] they mentioned the suspicion that whether the familiar-word-recognition effect was the main target of interest, or whether it was a baseline effect greatly impacted the size of the effect. They hypothesized that, because data collection in developmental psychology is costly, the data were published no matter the size of the effect if it was the target of interest. Conversely, if the effect was considered a baseline it would perhaps be omitted in case of a null finding. As a result, the familiar-word-recognition effect would be greatly inflated for studies where it was considered a baseline effect.
+
+```{r ss-tab}
+Model <- c("Unconstrained Model", "Null Model", "Common-effect Model", "Positive-effects Model", "Some-studies Model")
+BFs <- round(c(1, rev((1/bfs.ss$bfs))), 2)
+tab <- cbind(Model, BFs)
+colnames(tab) <- c("Model", "Bayes factor")
+apa_table(tab
+          , caption = "Bayes factors for the target vs. baseline study analysis."
+          , note = "Bayes factors are in comparison to the unconstrained model."
+          , row.names = FALSE)
+```
+
+We applied the some-studies model to the covariate of study use, and assigned $x_i = 1$ to baseline studies and $x_i = 0$ to main studies. Figure\ \@ref(fig:figModerator) shows estimates from the model for `r length(Is)` of the `r I.all` studies, only including the ones where the covariate was available. The majority of the studies with small effects are in the category that has the familiar-word-recognition effect as main target, and more of the studies with larger effect sizes belong to the `r sum(x.ind)` studies that reported the familiar-word-recognition effect as baseline.  We compared the some-studies model with the models from the previous sections using Bayes factors (See Table\ \@ref(tab:ss-tab)).^{The Bayes factors for the models shown both in Table 1 and Table\ \@ref(tab:ss-tab) deviate slightly because less studies are included for Table\ \@ref(tab:ss-tab).} The some-studies model outperforms all the other models, and it is preferred to the positive-effects model by `r round(bfs.ss$bfs[2]/bfs.ss$bfs[1], 2)` to 1.
+
+# Software
+
+The analyses presented here are conducted in `R` [@R-base].^[The following packages were used: `r cite_r("r-references.bib")`.] We provide an `R`-script containing all necessary functions to compute posterior estimates and Bayes factors at XXX. Functions `mcmc_unconstrained()`, `mcmc_moderator()`, and `mcmc_somesstudies()` are gibbs samplers providing posterior estimates for the overall analysis and moderator analyses. Functions `get.bfs.ss()` and `get.bfs.cont()` provide Bayes factor estimation for all proposed models. The analysis of the familiar-word-recognition effect [@Carbajal:etal:2020] is provided at XXX. We hope these functions help interested researchers to conduct the proposed analyses themselves.
+
+# Prior Sensitivity
+
+Bayes factor model comparison requires the choice of prior distributions. Some prior settings have minimal influence on the results of the analysis while others have substantial influence. In the current meta-analysis the prior settings with substantial influence on inference are the priors on the variance of study effect size parameters, $\tau^2$, and the prior setting on the variance of the overall effect size, $\mu$. Here, we highlight how prior settings need to be adjusted based on the effect size measure used, and we show how variation of prior settings on these two parameters affects inference.
+
+```{r child="analysis/transformations.Rmd"}
+```
+
+For the current analysis we decided to use Fisher's $Z$ as effect size measure for its beneficial properties in modeling. Fisher's $Z$ is popular for correlational analyses, and it can be interpreted as a standardized correlation coefficient. Other effect size measures that are frequently used in psychology are Cohen's $d$ (or its close relative Hedges' $g$) and log odds ratios. To quickly assess the effect of different choices of effect size measures, we simulated data from 100 experiments with 100 participants each, and calculated four different effect size measures for the same data.  Figure\ \@ref(fig:transplot) compares Cohen's $d$ to Hedges' $g$, Fisher's $Z$, and log odds ratio for the same data. As apparent from the figure, the key property for our analysis, the direction of the effect, is preserved across all transformations. However, the values of the effect size are different across measures. As a rule of thumb, Cohen's $d$ and Hedges' $g$ have about the same values, the value of Fisher's $Z$ is about half of Cohen's $d$ for the same data, and the value of log odds ratio is approximately double of Cohen's $d$ for the same data. 
+
+This scaling difference between effect size measures does not have implications for frequentist meta-analysis as long as the measures have full support and are asymptotically normally distributed. For Bayesian meta-analysis, however, the different scaling has a substantial effect on prior specification. When using the same prior distribution on effect size for Cohen's $d$ and Fisher's $Z$, for example, model comparison results would differ even if the same data are used. Therefore, it is impossible to recommend default prior settings for Bayesian meta-analysis that can be applied across different effect size measures. Adjustments are needed for the variance of $\theta_i$, $\tau^2$, and for the variance of $\mu$. For $\tau^2$ we chose an inverse-gamma distribution with shape of 1 and scale of 0.02. The variance of $\mu$ is set to $0.15^2$. If Cohen's $d$ is used instead of Fisher's $Z$, a quick fix would be to double the scale on $\tau^2$ (resulting in a scale of 0.04), and to double the standard deviation of $\mu$ (resulting in a variance of $0.30^2$). 
+
+```{r tabsens, results='asis'}
+tabsens <- rbind(set0, set1, set2, set3, set4)
+getbfpretty <- function(bfs){
+  c(1/bfs[3], bfs[4]/bfs[3], bfs[5]/bfs[3])
+}
+bfsens <- round(rbind(getbfpretty(bfs.cont$bfs)
+                      , getbfpretty(bfs.sens1$bfs)
+                      , getbfpretty(bfs.sens2$bfs)
+                      , getbfpretty(bfs.sens3$bfs)
+                      , getbfpretty(bfs.sens4$bfs)), 2)
+
+tabsens <- cbind(tabsens, bfsens)
+colnames(tabsens) <- c("Shape of $\\tau^2$", "Scale of $\\tau^2$", "Variance of $\\mu$"
+                       , "$BF_{pu}$", "$BF_{pc}$", "$BF_{p0}$")
+tabsens[, 3] <- paste0("$", tabsens[, 3], "^2$")
+
+apa_table(tabsens, caption = "Prior sensitivity analysis.", row.names = F, escape = F)
+```
+
+But how are the analyses affected by these choices? One way of assessing the influence of the choice of priors is to conduct a sensitivity analyses. In a sensitivity analysis, the variability of Bayes factors based on reasonable adjustments of prior settings is assessed [e.g., @Haaf:Rouder:2017; @Heycke:etal:2018]. Here, we conducted a sensitivity analysis for the familiar-word-recognition effect where we assessed the effect of reasonable prior settings on the Bayes factors. We chose to double and halve the scale on $\tau^2$ from our original setting between 0.01 and 0.04), and to double and halve the standard deviation of $\mu$ (between 0.08 and 0.30). 
+
+Table\ \@ref(tab:tabsens) shows the Bayes factors for the original analysis and four additional analyses varying these settings. Bayes factors are between the positive-effects model and the model in the respective column. In general, when variance and scale parameters were decreased (corresponding to smaller expected effect sizes) Bayes factors in favor of the positive-effects model compared to all other models increased (up to $BF_{pu} = `r round(1/bfs.sens3$bfs[3], 2)`$). When variance and scale parameters where increased (corresponding to larger expected effect sizes) Bayes factors the null model was preferred over the positive-effects model (up to $BF_{0p} = `r round(bfs.sens1$bfs[3]/bfs.sens1$bfs[5], 2)`$). The prior on the variance of $\mu$ seemingly has the biggest impact for the current analysis.
+
+The results from the sensitivity analysis highlight the importance of good prior choices. Dependent on the priors, we may gain evidence for or against the effect in the current analysis. The impact of these choice, however, depends on the application, the number of studies, and the size of the target effects. To aid the interpretation of the range of prior settings used here, a scale of Fisher's $Z$ of 0.15 corresponds to a scale on Cohen's $d$ of $`r round(ztod(0.15), 2)`$, or a small to medium effect. If the scale on this effect size is cut in half the prior settings correspond to a predicted effect size of $`r round(ztod(0.08), 2)`$ on the Cohen's $d$ scale. In that case there is overwhelming evidence from the data for such a small effect. Likewise, if the scale is doubled the prior settings correspond to a a predicted effect size of $`r round(ztod(0.3), 2)`$ on the Cohen's $d$ scale, which is a sizable effect. In that case the data are more in line with the absence of an effect. Therefore, the scale settings have to reflect the expected effect size for the effect size measure that is analyzed.
+
+<!-- In addition, with every model development come model assumptions that need to be taken into account. An issue with Rouder and colleagues' [-@Rouder:etal:2019b] development was the underlying assumption of homogeneity-of-variance across the studies in the meta-analysis. For many-labs studies as the ones analyzed by @Rouder:etal:2019b, this assumption may be reasonable. For conventional meta-analysis, however, the homogeneity-of-variance assumption is difficult where studies vary in scale and design. This assumption is not needed with the current approach. Using Fisher's $Z$ as target of the models removes this necessity. However, modeling Fisher's $Z$ introduces the assumption that the observed within-study variance is the true variance. With larger sample sizes, however, the analysis may be robust against violations of this assumption. In the future, an examination of the effect of violations of this assumption may be useful. -->
+
+# Discussion
+
+Meta-analysis is a powerful tool to summarize evidence across several studies. In the absence of open data it is the most straight-forward method to combine quantitative results across multiple studies. Here, we highlight a fundamental, theoretical issue with meta-analysis---the issue whether we even ask the right scientific question. Rather than solely focusing on an overall effect size, we ask whether every study in the data set shows an effect in the expected direction. This scientific question is in line with the concept of qualitative interactions [@Gail:Simon:1985] where different treatments may be appropriate for different populations in a clinical setting. And it is also in line with considerations of replicability. In light of psychological theory, we are oftentimes more interested in the direction of an effect rather than its size [@Haaf:etal:2019].
+
+To answer the question whether every study shows an effect in the same direction we develop a set of models: A general model much like the conventional meta-analytic random-effects model; a positive-effects model where all studies have an effect in the same direction; a common-effect model much like the conventional meta-analytic fixed-effect model; and a null model. To assess the relative strength of evidence between these models, we propose a Bayes factor model comparison approach adapted from @Haaf:Rouder:2017 and @Rouder:etal:2019b. Critically, the new approach models the collection of studies' effect size measures and therefore can be applied if only surface statistics are available. 
+
+A second scientific question for meta-analysis concerns predictor variables. Oftentimes, we ask whether task or population characteristics affect the observed effect size in question. We show how the approach can be extended to include potential moderators. We apply the does-every-study meta-analysis to the familiar-word-recognition effect [@Carbajal:etal:2020] in babies. In developmental research, small sample sizes are common, and meta-analysis therefore remains a central methodological approach. The results from our analysis provide evidence for the claim that studies either show a positive effect, or no effect whatsoever. We did not find a qualitative interaction where some studies show an opposite effect.
+
+## Limitations and Future Directions
+
+A main limitation of the current approach is that it does not allow for the identification and correction of publication bias. Publication bias and questionable research practices are intimately tied to the question of the usefulness of meta-analysis [@Carter:etal:2017; @Corker:2018]. If the studies in the meta-analytic set are heavily biased, using them to learn about the population is difficult. A number of correction methods for publication bias have been proposed [@Duval:Tweedie:2000; @Simonsohn:etal:2014; @Stanley:Doucouliagos:2014; @Hedges:1984; @Iyengar:Greenhouse:1988]. One possible extension of the current modeling approach is to add publication bias correction measures such as selection modeling approaches [@Iyengar:Greenhouse:1988; @Maier:etal:2020]. In principle, this extension should not be too difficult. Yet, assessing the success of these corrections can be problematic, as neither the process of study censorship nor the amount of publication bias are known in any real meta-analytic set [@Guan:Vandekerckhove:2016; @Haaf:2020]. There is an additional problem with adding publication bias correction to the current modeling approach. To illustrate the problem, consider Figure\ \@ref(fig:meta-modelcomp)A. If all studies indeed have a true positive effect, then the resulting distribution of observed effects should be similar to the slightly skewed, mostly positive distribution. However, the distribution that is assumed by most publication bias correction methods is the one resulting from the general model, which is symmetric, normal-shaped. Most, if not all correction methods use a skewed distribution as an indicator for publication bias. While it may be possible to disentangle publication bias and true positive effects by assessing the relationship of sample size and effect size, auch a solution remains an open issue.
+
+One main contribution of the current analysis compared to the analysis proposed by @Rouder:etal:2019b is modeling surface statistics instead of raw data. This approach is necessary when raw study data are not available. Whenever raw data are available, we recommend using hierarchical model approaches instead of surface statistics models. Hierarchical models are better equipped to optimally model within-study variability. As open science gains more and more traction, however, it may be possible that raw data are available for some newer studies but not others. To optimally incorporate information from raw data and surface data, a hybrid modeling approach integrating the models proposed by @Rouder:etal:2019b and our current analysis might be useful.
+
+In summary, the current approach allows to investigate questions of ordinal constraint in a meta-analytic setting. We think that answering the does-every-study question is important. If, indeed, every study shows a true effect in the same, expected direction, maintaining an underlying theory for the target phenomenon seems reasonable. If, however, the ordinal constraint is violated and some studies indeed show true opposite effects, researchers need to investigate the underlying mechanism that lead to this qualitative interaction. These mechanisms may be found in design or population, and the proposed predictor analysis can help understanding the underlying differences.
+
+\newpage
+
+# References
+```{r create_r-references}
+# r_refs(file = "r-references.bib")
+```
+
+\begingroup
+\setlength{\parindent}{-0.5in}
+\setlength{\leftskip}{0.5in}
+
+<div id = "refs"></div>
+\endgroup
+
+# Appendix
+
+The asymptotic distribution of $Z$ is well established for the correlation between two independent and identically distributed normal random variables [@Ferguson:1996]. In the case of correlation, Fisher's $Z$ serves as normalized correlation measure. Yet, how does Fisher's $Z$ translate to experimental data?
+Let's assume an experimental setup with $j$ conditions, $j = 1, 2$. The $i$th participant is assigned to one of the two conditions, $i = 1, \ldots, 2n$, where $n$ is the number of participants in each condition and $2n$ is the total number of participants. Then $Y_i$ denotes the $i$th person's observation with 
+
+\begin{align}\label{eq:defY}
+Y_{i} \sim \begin{cases} \mbox{Normal}(\mu_1, \sigma^2) & \mbox{if } i = 1, \ldots, n,\\
+\mbox{Normal}(\mu_2, \sigma^2) & \mbox{if } i = n + 1, \ldots, 2n.\end{cases}
+\end{align}
+
+Here, $\mu_j$ denotes the true mean of the $j$th condition and $\sigma^2$ denotes the within-group variance. We may first calculate the effect size measure Cohen's $d$ as $d = (\bar{Y}_2 - \bar{Y}_1) / s_{pooled}$ with the condition means $\bar{Y}_j$ and the pooled standard deviation $s_{pooled} = \sqrt{\frac{\sum_1^n(Y_i - \bar{Y}_1)^2 + \sum_{n + 1}^{2n}(Y_i - \bar{Y}_2)^2}{2n}}$.^[Note that this formula is based on the biased variance estimator using $n$ in the denominator instead of $n - 1$.] If we wish to calculate Fisher's $Z$ as an estimate of the size of the effect between the two conditions, we first need to transform Cohen's $d$ to $r$ using
+
+\[
+r = \frac{d}{\sqrt{d^2 + 4)}}.
+\]
+
+To understand what this correlation coefficient represents we may define a new variable, $X_i$, that denotes $i$th participant's condition. $X_i$ is defined as
+
+\begin{align}\label{eq:defX}
+X_{i} = \begin{cases} -1 & \mbox{if } i = 1, \ldots, n,\\ 1 & \mbox{if } i = n + 1, \ldots, 2n. \end{cases}
+\end{align}
+
+The correlation coefficient $r$ is the point-biserial correlation between $\mathbf{X}$ and $\mathbf{Y}$, and Fisher's $Z$ may be calculated using Equation\ \@ref(eq:Zcalc). Yet, is the asymptotic distribution of Fisher's $Z$ for the biserial correlation the same as the asymptotic distribution of Fisher's $Z$ for the bivariate normal? Before modeling experimental and correlational data, we need to establish distributional properties for the biserial case. Especially the asymptotic stable variance of Fisher's $Z$ is crucial for the modeling approach. Here, we provide a proof that the asymptotic variance is stable and does not depend on the size of the effect. 
+
+Consider again random variables $Y_i$ and $X_i$ as defined in Equations\ \@ref(eq:defY) and \@ref(eq:defX). Let $\bar{Y}$ be the grand mean of $\mathbf{Y}$, $\bar{Y} = 1/2 (\bar{Y}_1 + \bar{Y}_2)$. Here, $\bar{Y}_1$ denotes the mean of $Y_i$ for $i = 1, \ldots, n$, and $\bar{Y}_2$ denotes the mean of $Y_i$ for $i = n + 1, \ldots, 2n$. Let $S_{YY}$ denote the variance of $\mathbf{Y}$, $S_{YY} = \sum_1^n (Y_i - \bar{Y}_1)^2 + \sum_{n+1}^{2n} ( Y_i - \bar{Y}_2)^2 + n/2 (\bar{Y}_1 - \bar{Y}_2)^2 = SS_1 + SS_2 + n/2 (\bar{Y}_1 - \bar{Y}_2)^2$, where $SS_1$ is the sum of squares for $i = 1, \ldots, n$, and $SS_2$ is the sum of squares for $i = n + 1, \ldots, 2n$. Let $S_{XX} = 2n$ denote the variance of $\mathbf{X}$ and let $S_{XY} = n(\bar{Y}_1 - \bar{Y}_2)$ denote the covariance of $\mathbf{X}$ and $\mathbf{Y}$. We can now insert these quantities into the formula for the correlation coefficient $r$:
+
+\begin{align*}
+r &= \frac{S_{XY}}{\sqrt{S_{XX}S_{YY}}}\\
+&= \frac{n(\bar{Y}_1 - \bar{Y}_2)}{\sqrt{2n(SS_1 + SS_2 + n/2 (\bar{Y}_1 - \bar{Y}_2)^2)}}\\
+&= \frac{\sqrt{1/2}(\bar{Y}_1 - \bar{Y}_2)}{\sqrt{\frac{2(SS_1 + SS_2)}{2n} + 1/2(\bar{Y}_1 - \bar{Y}_2)^2)}}.
+\end{align*}
+
+We may define a new random variable $m_n = \bar{Y}_1 - \bar{Y}_2$. Then, based on the Central Limit Theorem:
+
+\[\sqrt{n}(m_n - \Delta) \stackrel{\mathscr{D}}{\rightarrow} \mbox{Normal}(0, 2 \sigma^2),\]
+
+where $\Delta$ is the true effect. The pooled variance of $\mathbf{Y}$ is $S_n = \frac{SS_1 + SS_2}{2n}$.^[Note that $S_n$ is not the variance of $\mathbf{Y}$, but the pooled variance of $Y_i$ if $i = 1, \ldots, n$ and $Y_i$ if $i = n + 1, \ldots, 2n$] The Central Limit Theorem gives:
+
+\[\sqrt{n}(S_n - 2\sigma^2) \stackrel{\mathscr{D}}{\rightarrow} \mbox{Normal}(0, 4\sigma^2).\]
+
+Using the two asymptotic distributions, $r \rightarrow \frac{\sqrt{1/2}(\Delta)}{\sqrt{4\sigma^2 + \Delta^2/2}}$. Let $\Sigma$ be the variance-covariance matrix of $\big(\begin{smallmatrix} m_n\\ S_n \end{smallmatrix}\big)$:
+
+\[\Sigma = 
+\begin{bmatrix}
+2\sigma^2 & 0\\
+0 & 4\sigma^2
+\end{bmatrix}.
+\]
+
+And let $h(a, b) = \frac{\sqrt{1/2}(a)}{\sqrt{2b + a^2/2}}$. The partial derivatives of $h(a, b)$ are:
+
+\begin{align}
+\frac{\partial h}{\partial a} &= \frac{\sqrt{2} b}{(2b + a^2/2)^{3/2}},\\
+\frac{\partial h}{\partial b} &= -\frac{a}{\sqrt{2}(2b + a^2/2)^{3/2}}.
+\end{align}
+
+Using the Delta-method [@Ferguson:1996], we may express the asymptotic distribution of $h(m_n, S_n)$ as
+
+\[\sqrt{n}(h(m_n, S_n) - h(\Delta, 2\sigma^2) \stackrel{\mathscr{D}}{\rightarrow} \mbox{Normal}(0, \Sigma^*),\]
+
+where $h(m_n, S_n)$ is the correlation coefficient, the mean, $h(\Delta, 2\sigma^2)$, is the true correlation coefficient, $\rho$, and the asymptotic variance is 
+
+\begin{align*}
+\Sigma^* &= \Big(\frac{2\sqrt{2} \sigma^2}{(4\sigma^2 + \Delta^2/2)^{3/2}}\Big)^2 2\sigma^2 + \Big(\frac{- \Delta}{\sqrt{2}(4\sigma^2 + \Delta^2/2)^{3/2}}\Big)^2 4\sigma^2 \\
+&= \frac{16}{\big(8 + \frac{\Delta^2}{\sigma^2}\big)^2}.
+\end{align*}
+
+We may apply Fisher's $Z$ transformation to stabilize the variance. Let $g(r) = 1/2 \log \big(\frac{1 + r}{1 - r}\big)$. Then $g'(r) = \frac{1}{1 - r^2}$. Substituting $h(\Delta, 2\sigma^2)$ for $\rho$, $g'(\rho) = \frac{8 + \frac{\Delta^2}{\sigma^2}}{8}$. We may again use the Delta-method to express the asymptotic distribution of $Z$:
+
+\[\sqrt{n}(g(r) - g(\rho) \stackrel{\mathscr{D}}{\rightarrow} \mbox{Normal}(0, (g'(\rho))^2 \Sigma^*),\]
+
+where $g(r) = Z$ and $g(\rho) = \theta$. The asymptotic variance is
+
+\[
+(g'(\rho))^2 \Sigma^* = \frac{\cancel{(8 + \frac{\Delta^2}{\sigma^2})^2}}{8^2} \frac{16}{\big(\cancel{8 + \frac{\Delta^2}{\sigma^2}\big)^2}} = 1/4.
+\]
+
+Crucially, this value, $1/4$, does not depend on $\rho$.
+

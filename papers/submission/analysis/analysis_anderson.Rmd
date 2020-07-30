@@ -1,0 +1,266 @@
+```{r}
+get.bfs <- function(Z, N, Theta, R = 100000, priors = c(1, .01, 1, .01)){
+  
+  ## Analytic Bayes factor
+  
+  ### Marginal likelihood unconstrained model
+  s2_mu <- rinvgamma(R, priors[3], priors[4])
+  s2_theta <- rinvgamma(R, priors[1], priors[2])
+  get.log.likeli.g <- function(s2, z, n){ #s2 = vector of s2_mu and s2_theta
+    sum(dnorm(z, 0, sqrt(1/(n - 3) + s2[1] + s2[2]), log = T))
+  }
+  
+  r.likeli <- apply(cbind(s2_mu, s2_theta), 1, get.log.likeli.g, z = Z, n = N)
+  Mg <- mean(exp(r.likeli))
+  
+  # test <- apply(cbind(s2_mu, s2_theta)
+  #               , 1
+  #               , function(s2, n){sqrt(1/(n - 3) + s2[1] + s2[2])}, n = N[1])
+  
+  ### Marginal likelihood null model
+  lM0 <- sum(dnorm(Z, 0, sqrt(1/(N - 3)), log = T))
+  
+  ### Resulting BF
+  BF.g0 <- Mg / exp(lM0)
+  
+  ## Encompassing Bayes factor
+  
+  ### Posterior probability of all positive
+  good <- Theta > 0
+  all.good <- apply(good, 1, mean)
+  PostCount <- mean(all.good == 1)
+  
+  ### Prior probability of all positive
+  x <- matrix(nrow = R, ncol = I)
+  mu <- rnorm(R, 0, sqrt(s2_mu))
+  for (i in 1:I)
+    x[,i] <- rnorm(R, mu, sqrt(s2_theta))
+  
+  all.greater <- function(x) as.integer(mean(x > 0) == 1)
+  PriorCount <- mean(apply(x, 1, all.greater))
+  
+  ### Resulting BF
+  bf.FP <- PriorCount/PostCount
+  
+  return(c("BF.g0" = BF.g0, "BF.gp" = bf.FP))
+}
+
+set0 <- c(1, .01, 1, .01)
+```
+
+
+```{r data-meta, include=FALSE, cache = T, warning=F}
+dat = read.delim("../data/cleaned_data_Anderson.txt"
+                 , stringsAsFactors=F)
+dat <- subset(dat, Outcome %in% c("AggBeh", "AggAff", "AggCog", "PhysArous"))
+dat.AB <- subset(dat, Outcome == "AggBeh" & Setting == "Exp")
+
+dat$sig = ifelse(dat$p.twotail < .05, "significant", "not-significant")
+
+dat = 
+  dat %>%
+  mutate("Diss" = ifelse(dat$Pub == "Dissertation (unpub)", "Diss", "Not Diss"))
+# Brady (2006) ended up as a journal-published article.
+dat$Diss[grep("Brady, S. (2006).", dat$Full.Reference, fixed=T)] = "Not Diss"
+diss.dat =
+dat %>%
+  filter(Diss == "Diss" & Setting == "Exp")
+```
+
+<!-- Anderson all data -->
+
+```{r chain-setup-all}
+z <- dat$Fisher.s.Z
+se <- dat$Std.Err
+ni <- dat$Sample.size
+ni.all <- ni
+I <- length(z)
+I.all <- I
+neg.all <- sum(z < 0)
+
+M <- 20000
+keep <- 2001:M
+
+mu.theta <- 0:(M - 1)
+theta <- matrix(nrow = M, ncol = I)
+
+s2.theta <- 1:M
+s2.mu.th <- 1:M
+
+theta[1, ] <- 0
+
+s2.theta[1] <- .05
+s2.mu.th[1] <- .1
+
+h.theta.2 <- .01
+h.mu.2 <- .01
+```
+
+```{r chain-gen-all, cache = T}
+for(m in 2:M){
+  
+  #theta
+  c <- z * (ni - 3) + mu.theta[m-1] / (s2.theta[m-1])
+  v <- 1/(ni - 3 + 1 / (s2.theta[m-1]))
+  theta[m, ] <- rnorm(I, c * v, sqrt(v))
+  
+  #mu.theta
+  c <- sum(theta[m,])/(s2.theta[m-1])
+  v <- 1/(I/(s2.theta[m-1]) + 1/(s2.mu.th[m-1]))
+  mu.theta[m] <- rnorm(1, c * v, sqrt(v))
+  
+  # #s2s
+  scale <- sum((theta[m, ] - mu.theta[m])^2) / 2
+  s2.theta[m] <- rinvgamma(1, 1 + I/2, scale + h.theta.2)
+
+  scale <- mu.theta[m]^2 / (2)
+  s2.mu.th[m] <- rinvgamma(1, 1.5, scale + h.mu.2)
+  
+}
+
+all.theta <- theta
+
+pmall <- colMeans(all.theta[keep,])
+pm.nu.all <- mean(mu.theta[keep])
+ci.all <- quantile(mu.theta[keep], probs = c(.025, .975))
+```
+
+```{r, cache = T}
+zs <- z
+bfs.all <- get.bfs(zs, ni.all, all.theta[keep,], R = 500000)
+```
+
+<!-- Aggressive Behavior -->
+
+```{r chain-setup-and}
+z <- dat.AB$Fisher.s.Z
+se <- dat.AB$Std.Err
+ni <- dat.AB$Sample.size
+ni.and <- ni
+I <- length(z)
+I.and <- I
+neg.and <- sum(z < 0)
+
+M <- 20000
+keep <- 2001:M
+
+mu.theta <- 0:(M - 1)
+theta <- matrix(nrow = M, ncol = I)
+
+s2.theta <- 1:M
+s2.mu.th <- 1:M
+
+theta[1, ] <- 0
+
+s2.theta[1] <- .05
+s2.mu.th[1] <- .1
+
+h.theta.2 <- .01
+h.mu.2 <- .01
+```
+
+```{r chain-gen-and, cache = T}
+for(m in 2:M){
+  
+  #theta
+  c <- z * (ni - 3) + mu.theta[m-1] / (s2.theta[m-1])
+  v <- 1/(ni - 3 + 1 / (s2.theta[m-1]))
+  theta[m, ] <- rnorm(I, c * v, sqrt(v))
+  
+  #mu.theta
+  c <- sum(theta[m,])/(s2.theta[m-1])
+  v <- 1/(I/(s2.theta[m-1]) + 1/(s2.mu.th[m-1]))
+  mu.theta[m] <- rnorm(1, c * v, sqrt(v))
+  
+  # #s2s
+  scale <- sum((theta[m, ] - mu.theta[m])^2) / 2
+  s2.theta[m] <- rinvgamma(1, 1 + I/2, scale + h.theta.2)
+
+  scale <- mu.theta[m]^2 / (2)
+  s2.mu.th[m] <- rinvgamma(1, 1.5, scale + h.mu.2)
+  
+}
+
+anderson.theta <- theta
+
+pmand <- colMeans(anderson.theta[keep,])
+pm.nu.and <- mean(mu.theta[keep])
+ci.and <- quantile(mu.theta[keep], probs = c(.025, .975))
+```
+
+```{r, cache = T}
+zs <- z
+bfs.and <- get.bfs(zs, ni.and, anderson.theta[keep,])
+```
+
+```{r chain-setup-diss}
+#Just need some changes here.
+bla <- 1
+
+z <- diss.dat$Fisher.s.Z
+se <- diss.dat$Std.Err
+ni <- diss.dat$Sample.size
+ni.diss <- ni
+I <- length(z)
+I.diss <- I
+neg.diss <- sum(z < 0)
+
+M <- 20000
+keep <- 2001:M
+
+mu.theta <- 0:(M - 1)
+theta <- matrix(nrow = M, ncol = I)
+
+s2.theta <- 1:M
+s2.mu.th <- 1:M
+
+theta[1, ] <- 0
+
+s2.theta[1] <- .05
+s2.mu.th[1] <- .1
+
+h.theta.2 <- .01
+h.mu.2 <- .01
+```
+
+```{r chain-gen-diss, cache = T}
+#Just need some changes here.
+bla <- 1
+
+for(m in 2:M){
+  
+  #theta
+  c <- z * (ni - 3) + mu.theta[m-1] / (s2.theta[m-1])
+  v <- 1/(ni - 3 + 1 / (s2.theta[m-1]))
+  theta[m, ] <- rnorm(I, c * v, sqrt(v))
+  
+  #mu.theta
+  c <- sum(theta[m,])/(s2.theta[m-1])
+  v <- 1/(I/(s2.theta[m-1]) + 1/(s2.mu.th[m-1]))
+  mu.theta[m] <- rnorm(1, c * v, sqrt(v))
+  
+  # #s2s
+  scale <- sum((theta[m, ] - mu.theta[m])^2) / 2
+  s2.theta[m] <- rinvgamma(1, 1 + I/2, scale + h.theta.2)
+
+  scale <- mu.theta[m]^2 / (2)
+  s2.mu.th[m] <- rinvgamma(1, 1.5, scale + h.mu.2)
+  
+}
+
+diss.theta <- theta
+
+pmdiss <- colMeans(diss.theta[keep,])
+pm.nu.diss <- mean(mu.theta[keep])
+ci.diss <- quantile(mu.theta[keep], probs = c(.025, .975))
+```
+
+
+
+```{r, cache = T}
+#Just need some changes here.
+bla <- 1
+
+zs <- z
+bfs.diss <- get.bfs(zs, ni.diss, diss.theta[keep,])
+```

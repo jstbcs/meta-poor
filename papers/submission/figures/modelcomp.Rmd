@@ -1,0 +1,253 @@
+---
+title: "Meta-poor model comparison"
+author: "Haaf & Rouder""
+output:
+  pdf_document: papaja::apa6_pdf
+  html_document: default
+  word_document: papaja::apa6_word
+---
+
+```{r meta-prep-modelfig, cache = TRUE, warning=F}
+sd0 <- .07
+sd1 <- .04
+eta = .7
+
+gamma <- seq(-.25, .25, .005)
+
+kern <- convKernel(sigma = 5, k = "gaussian")
+
+nrmlz <- function(mat)
+{
+  tot <- sum(mat)
+  mat/tot
+}
+
+
+#Conditional model specification
+norm0 <- function(theta1, theta2, Sigma) dnorm(theta1, 0,Sigma) * dnorm(theta2, 0, Sigma)
+norm <- function(theta1, theta2, Sigma) dmvnorm(cbind(theta1, theta2), c(0,0), Sigma)
+normT1 <- function(theta1, theta2, Sigma, l, u) dtmvnorm(cbind(theta1, theta2)
+                                                   , c(0,0)
+                                                   , Sigma
+                                                   , lower = rep(l, 2)
+                                                   , upper = rep(u, 2))
+normT <- function(theta1, theta2, Sigma, l , u){
+  dtnorm(theta1, 0, Sigma, lower = l, upper = u) * dtnorm(theta2, 0, Sigma, lower = l, upper = u)
+}
+
+Null <- outer(gamma, gamma, norm0, Sigma = .002)
+Null <- nrmlz(Null)
+One <- outer(gamma
+                   , gamma
+                   , normT1
+                   , Sigma = matrix(c(sd0^2, sd0^2.001, sd0^2.001, sd0^2)
+                                    , nrow = 2)
+                   , l = 0
+                   , u = Inf) 
+One <- nrmlz(One)
+Pos <- outer(gamma
+                   , gamma
+                   , normT
+                   , sd0
+                   , l = 0
+                   , u = Inf)
+Pos <- nrmlz(Pos)
+General <- outer(gamma
+                 , gamma
+                 , norm
+                 , Sigma = matrix(c(sd0^2, 0, 0, sd0^2)
+                                  , nrow = 2))
+General <- nrmlz(General)
+
+priorPos1 <- outer(gamma
+                   , gamma
+                   , normT1
+                   , Sigma = matrix(ncol = 2, c(sd0^2, 0, 0, .005^2))
+                   , l = 0
+                   , u = Inf)
+priorPos1 <- nrmlz(priorPos1)
+
+priorPos2 <- outer(gamma
+                   , gamma
+                   , normT1
+                   , Sigma = matrix(ncol = 2, c(.005^2, 0, 0, sd0^2))
+                   , l = 0
+                   , u = Inf)
+priorPos2 <- nrmlz(priorPos2)
+
+priorSpike <- outer(gamma
+                   , gamma
+                   , normT1
+                   , Sigma = matrix(ncol = 2, c(.005^2, 0, 0, .005^2))
+                   , l = 0
+                   , u = Inf)
+priorSpike <- nrmlz(priorSpike)
+
+Mix <- .0 * priorSpike + .5 * priorPos1 + .5 * priorPos2 + 7 * Pos
+Mix <- nrmlz(Mix)
+
+#Marginal model specification
+GeneralH <- outer(gamma
+                  , gamma
+                  , norm
+                  , Sigma = matrix(c(sd0^2, eta*sd0^2, eta*sd0^2, sd0^2)
+                                     , nrow = 2))
+GeneralH <- nrmlz(GeneralH)
+
+PosH <- 4 * GeneralH
+index <- gamma < 0
+PosH[index, ] <- 0
+PosH[, index] <- 0
+PosH <- nrmlz(PosH)
+
+MixH <- .0 * priorSpike + .5 * priorPos1 + .5 * priorPos2 + 8 * PosH
+MixH <- nrmlz(MixH)
+
+#Model Predictions
+NullP <- nrmlz(applyFilter(Null, kern))
+OneP <- nrmlz(applyFilter(One, kern))
+PosP <- nrmlz(applyFilter(PosH, kern))
+GeneralP <- nrmlz(applyFilter(GeneralH, kern))
+MixP <- 0 * priorSpike + .8 * priorPos1 + .8 * priorPos2 +  2*PosH
+MixP <- nrmlz(applyFilter(x=MixP, kernel =kern))
+
+#####Figure
+top1 <- max(One, PosH)
+top2 <- max(Pos)
+top3 <- max(NullP)
+```
+
+```{r meta-modelcomp, cache = FALSE, fig.cap= "Model specification and predictions for the positive-effects model and the general model. The models are on the left hand-side, and the predictions for data are on the right hand-side. Top row: Models for one study. Even though the positive-effects model is restricted to positive values in specification, it can predict small negative observed values. Middle row: Positive-effects model for two studies. Effects for any two studies are predicted to be correlated due to the hiearchical nature of the model, and mostly positive. Bottom row: General model for two studies. Effects are still correlated, but may be positive or negative. The predictions for any specific effect combination is weaker for the general model as is covers more parameter space.", fig.height=6.5, fig.width=5, dev = "png"}
+modFig <- function(mat, par, ylabel, xlabel, main, top, mod, xax = TRUE, yax = TRUE){
+  image(par
+        , par
+        , mat
+        , col = grey((256:0)/256)
+        , zlim = c(0, top)
+        , axes = FALSE
+        , ylab = ylabel
+        , xlab = xlabel
+        , frame.plot=TRUE
+        , main = ""
+        , cex.lab = 1.2)
+  if(xax == TRUE){
+  axis(1, at = seq(-.2, .2, .2), cex.axis = 1.2)}
+  if(yax == TRUE){
+  axis(2, at = seq(-.2, .2, .2), cex.axis = 1.2)}
+  abline(h = 0, col = "gray80", lty = "dotted")
+  abline(v = 0, col = "gray80", lty = "dotted")
+  mtext(mod, side = 2, line = 4)
+  mtext(main, side = 3, line = 1)
+}
+
+# pdf('figModPred.pdf',width=10,height=20)
+layout(matrix(1:6, ncol = 2), heights = c(.35, .3, .35))
+
+#models
+
+par(mar=c(3.5,4.5,3.5,1.5), mgp = c(2.4,.9,0))
+## Uni-dimensional model Figure
+x <- seq(-.25, .25, .001)
+y <- dnorm(x, 0, sd0)
+y2 <- dtnorm(x, 0, sd0, lower = 0)
+
+plot(x, y2, type = "l"
+     , xlab = "True Effects"
+     , ylab = "Density"
+     , ylim = range(y2)
+     , frame.plot = F
+     , lwd = 1.2
+     , col = "gray30"
+     )
+abline(v = 0, col = "indianred", lwd = 2)
+mtext("A.", side = 3, cex = 1, line = -1.5, at = -0.22)
+
+mtext("Model", side = 3, cex = 1)
+lines(x, y
+     , lwd = 1.2
+     , col = "gray30"
+     )
+lines(x, y2
+     , lwd = 1.2
+     , col = "gray30"
+     )
+abline(h = 0, col = "gray30", lwd = 1.2)
+
+#marginal
+par(mar=c(1,4.5,1,1.5), mgp = c(2.4,.9,0))
+
+modFig(PosH, gamma
+       , ylabel = expression(paste(theta[2])), xlabel = ""
+       , mod = "", top = top2, main = ""
+       , xax = FALSE
+       , yax = TRUE)
+mtext("C.", side = 3, cex = 1, line = -1.5, at = -0.22)
+
+par(mar=c(3.5,4.5,1,1.5), mgp = c(2.4,.9,0))
+modFig(GeneralH, gamma
+       , ylabel = expression(paste(theta[2])), xlabel = expression(paste(theta[1]))
+       , mod = "", top = top2, main = ""
+       , xax = TRUE
+       , yax = TRUE)
+mtext("E.", side = 3, cex = 1, line = -1.5, at = -0.22)
+
+
+#predictions
+par(mar=c(3.5,4.5,3.5,1.5), mgp = c(2.4,.9,0))
+## Uni-dimensional prediction Figure
+f.X <- function(theta1) dnorm(theta1, 0, sd1)   
+f.Y <- function(theta1) dtnorm(theta1, 0, sd0, lower = 0)  
+# convolution integral
+f.Z <- function(z) integrate(function(x, z) f.Y(z - x) * f.X(x), -Inf, Inf, z)$value
+f.Z <- Vectorize(f.Z)  
+pred2 <- f.Z(x)
+
+f.X <- function(theta1) dnorm(theta1, 0, sd1)   
+f.Y <- function(theta1) dnorm(theta1, 0, sd0)  
+# convolution integral
+f.Z <- function(z) integrate(function(x, z) f.Y(z - x) * f.X(x), -Inf, Inf, z)$value
+f.Z <- Vectorize(f.Z)  
+pred1 <- f.Z(x)
+
+plot(x, pred2, type = "l"
+     , xlab = "Observed Effects"
+     , ylab = "Density"
+     , ylim = range(y2)
+     , frame.plot = F
+     , lwd = 1.2
+     , col = "gray30"
+     )
+abline(v = 0, col = "indianred", lwd = 2)
+mtext("B.", side = 3, cex = 1, line = -1.5, at = -0.22)
+
+mtext("Prediction", side = 3, cex = 1)
+lines(x, pred1
+     , lwd = 1.2
+     , col = "gray30"
+     )
+abline(h = 0, col = "gray30", lwd = 1.1)
+mtext("One Dimension", side = 4, line = .5, cex = 1)
+
+par(mar=c(1,4.5,1,1.5), mgp = c(2.4,.9,0))
+
+modFig(PosP, gamma
+       , ylabel = "Fisher's Z", xlabel = ""
+       , mod = "", top = top2, main = ""
+       , xax = FALSE)
+# points(xp, yp, pch = 20, col = "darkred")
+mtext("Positive", side = 4, line = .5, cex = 1)
+mtext("D.", side = 3, cex = 1, line = -1.5, at = -0.22)
+
+par(mar=c(3.5,4.5,1,1.5), mgp = c(2.4,.9,0))
+modFig(GeneralP, gamma
+       , ylabel = "Fisher's Z"
+       , xlabel = "Fisher's Z"
+       , mod = "", top = top2, main = ""
+       , xax = TRUE)
+# points(xp, yp, pch = 20, col = "darkred")
+mtext("F.", side = 3, cex = 1, line = -1.5, at = -0.22)
+
+mtext("General", side = 4, line = .5, cex = 1)
+
+```
+

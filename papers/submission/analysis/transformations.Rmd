@@ -1,0 +1,166 @@
+```{r, include = F}
+vardumb <- function(x){
+  sum((x - mean(x))^2) / length(x)
+}
+
+get.d <- function(dat) { #cohen's d for within-participant designs
+    ls <- tapply(dat$y, dat$cond, function(x) length(x)- 1)
+    md  <- diff(tapply(dat$y, dat$cond, mean))
+    vars <- tapply(dat$y, dat$cond, vardumb)
+    csd <- ls[1] * vars[1] + ls[2] * vars[2]
+    csd <- csd/sum(ls)
+    csd <- sqrt(csd)                     ## common sd computation
+
+    return(md/csd)                        ## cohen's d
+}
+
+get.z <- function(dat){
+  
+  temp <- cor(dat$y, dat$cond)
+  fisherz(temp)
+}
+```
+
+```{r}
+dtoz <- function(d, a = 4){
+  r <- d / sqrt(d^2 + a)
+  atanh(r)
+}
+
+ztod <- function(z, a = 4){
+  r <- tanh(z)
+  2 * r / sqrt(1 - r^2)
+}
+```
+
+```{r}
+Vd <- function(d, n){
+  if(length(n) == 1) 1/n + d^2/(2*n) else (n[1] + n[2])/(n[1] * n[2]) + d^2 / (2 * (n[1] + n[2]))
+}
+
+Vz <- function(n){1/(n + 3)}
+```
+
+```{r}
+dtolor <- function(d){ d * pi/sqrt(3)}
+
+lortod <- function(lor){ lor * sqrt(3)/pi}
+
+Vlor <- function(Vd){ Vd * pi^2 / 3}
+```
+
+```{r}
+dtog <- function(d, n){
+ df <- ifelse(length(n) == 1, n - 1, n[1] + n[2] - 2) 
+ d * (1 - 3 / (4 * df - 1))
+}
+
+Vg <- function(Vd, n){
+ df <- ifelse(length(n) == 1, n - 1, n[1] + n[2] - 2) 
+ Vd * (1 - 3 / (4 * df - 1))^2
+}
+```
+
+```{r simulation-dat, echo = F}
+set.seed(123)
+
+I <- 100
+J <- 2
+K <- 50
+
+exp <- rep(1:I, each = J * K)
+cond <- rep(0:1, I, each = K)
+sub <- rep(1:K, I * J)
+
+#truth
+t.mu <- 1
+t.alpha <- rnorm(I, 0, .07)
+t.theta <- rtnorm(I, .065, .03, lower = 0)
+
+#data
+y <- rtnorm(I*J*K, t.mu + t.alpha[exp] + cond * t.theta[exp], .3, lower = 0)
+```
+
+```{r}
+dats <- split(data.frame(y, cond, exp, sub), exp)
+zs <- sapply(dats, get.z)
+ds <- sapply(dats, get.d)
+```
+
+```{r transform}
+z2s <- dtoz(ds)
+lors <- dtolor(ds)
+gs <- dtog(ds, n = 50)
+d2s <- ztod(zs)
+```
+
+```{r trans-check, eval = F}
+layout(matrix(1:2, ncol = 2))
+
+plot(zs, z2s, col = adjustcolor(1, .5), pch = 19)
+abline(0, 1)
+
+plot(ds, d2s, col = adjustcolor(1, .5), pch = 19)
+abline(0, 1)
+```
+
+```{r transplot, fig.asp = .92, fig.width = 4.5, fig.cap="Effect size measures for simulated data from 100 studies with 100 participants. The panels show transformations from Cohen's d to A. Cohen's d, B. Hedges' g, C. Fisher's Z, and D. log odds ratio. While order and sign of the effect size measures are consistent the scales differ substantially."}
+
+layout(matrix(1:4, ncol = 2, byrow = T), heights = c(.46, .54))
+par(mar = c(1, 3, 1, 1), mgp = c(2, .7, 0))
+
+plot(ds, d2s
+     , col = adjustcolor(1, .5), pch = 19
+     , ylim = range(lors), xlim = range(lors)
+     , ylab = "Cohen's d", xlab = "", xaxt = "n")
+mtext("A.", 3, line = -.7, at = -1.2)
+abline(0, 1, col = "gray50")
+abline(h = 0, col = "gray50")
+abline(v = 0, col = "gray50")
+
+plot(ds, gs
+     , col = adjustcolor(1, .5), pch = 19
+     , ylim = range(lors), xlim = range(lors)
+     , ylab = "Hedges' g", xlab = "", xaxt = "n")
+mtext("B.", 3, line = -.7, at = -1.2)
+abline(0, 1, col = "gray50")
+abline(h = 0, col = "gray50")
+abline(v = 0, col = "gray50")
+
+par(mar = c(3, 3, 1, 1), mgp = c(2, .7, 0))
+
+plot(ds, z2s
+     , col = adjustcolor(1, .5), pch = 19
+     , ylim = range(lors), xlim = range(lors)
+     , ylab = "Fisher's Z", xlab = "Cohen's d")
+mtext("C.", 3, line = -.7, at = -1.2)
+abline(0, 1, col = "gray50")
+abline(h = 0, col = "gray50")
+abline(v = 0, col = "gray50")
+
+plot(ds, lors
+     , col = adjustcolor(1, .5), pch = 19
+     , ylim = range(lors), xlim = range(lors)
+     , ylab = "Log Odds Ratio", xlab = "Cohen's d")
+mtext("D.", 3, line = -.7, at = -1.2)
+abline(0, 1, col = "gray50")
+abline(h = 0, col = "gray50")
+abline(v = 0, col = "gray50")
+```
+
+```{r priors, eval = F}
+dt.ls <- function(x, df, mu, scale) 1/scale * dt((x - mu)/scale, df)
+pt.ls <- function(x, df, mu, scale) pt((x - mu)/scale, df)
+
+x <- seq(-2, 2, .01)
+y1 <- dcauchy(x, 0, 1/sqrt(2))
+y2 <- dtrunc(x, "cauchy", a = 0, location = 0, scale = 1/sqrt(2))
+y3 <- dtrunc(x, "t.ls", a = 0, df = 3, mu = .35, scale = .102)
+
+plot(x, y3, type = "l", lwd = 2, col = "slateblue", ylab = "Density")
+lines(x, y1, lwd = 2, col = "darkred")
+lines(x, y2, lwd = 2, col = "darkgreen")
+```
+
+
+

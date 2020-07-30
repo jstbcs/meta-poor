@@ -1,0 +1,256 @@
+---
+title: "Developmental data set"
+author: "Julia Haaf"
+date: "07/11/2019"
+output: pdf_document
+header-includes:
+  - \usepackage{threeparttable}
+  - \usepackage{booktabs}
+---
+
+```{r}
+source("../../../share/lib.R")
+```
+
+<!-- # Gibbs sampler -->
+
+<!-- ## Unconstrained model -->
+
+```{r dat-carbajal}
+dat <- read.csv("../data/famWord.csv", header = TRUE)
+# head(dat)
+
+dat$z_calc <- dtoz(dat$d_calc)
+dat$z_var_calc <- Vz(dat$n_1)
+
+ord.eff <- cbind(dat$z_calc, dat$z_calc - sqrt(dat$z_var_calc), dat$z_calc + sqrt(dat$z_var_calc))
+ord.eff <- ord.eff[order(ord.eff[, 1]), ]
+
+dat$mean_age_stand <- (dat$mean_age - mean(dat$mean_age)) / sd(dat$mean_age)
+```
+
+```{r freq-ma}
+freq.rma <- rma(dat$z_calc, vi = dat$z_var_calc)
+freqci <- c(freq.rma$ci.lb, freq.rma$ci.ub)
+freqb <- freq.rma$b
+
+freq.rma.age <- rma(dat$z_calc, vi = dat$z_var_calc, mods = ~ dat$mean_age_stand)
+```
+
+```{r chain-gen-unconstrained, cache = T}
+res_unconstrained <- mcmc_unconstrained(zi = dat$z_calc
+                                        , ni = dat$n)
+
+rec.theta <- res_unconstrained$theta
+rec.mutheta <- res_unconstrained$mu.theta
+```
+
+```{r resFig, echo = F, fig.cap= "Results for the familiar-word-recognition effect from the unconstrained model. Observed effects with 95\\% confidence intervals are depicted by the gray squares and bars, posterior estimates with 95\\% credible intervals are given by the black points and bars. There is hierarchical shrinkage to the overall effect reducing the variability of study effects drastically.", fig.asp = 1, fig.width=7}
+order.ef <- rev(order(dat$z_calc))
+freqse <- sqrt(dat$z_var_calc)
+freqcipstudy <- cbind(dat$z_calc - 1.96 * freqse, dat$z_calc + 1.96 * freqse)
+pm2 <- colMeans(rec.theta) 
+cis <- t(apply(rec.theta, 2, quantile, probs = c(.025, .975)))
+I.all <- nrow(dat)
+
+weight <- 1/freqse^2
+weight_scaled <- ((4 - 1)*(weight - min(weight))) / (max(weight) - min(weight)) + 2
+weight_estimated <- 1/(apply(rec.theta, 2, var))
+weight_estimated_scaled <- ((4 - 1) * (weight_estimated - min(weight_estimated))) / (max(weight_estimated) - min(weight_estimated)) + 2
+
+dfBoth <- data.frame(effectSize = c(dat$z_calc[order.ef], pm2[order.ef]),
+                     y = c(1:I.all, (1:I.all) - .4),
+                     studyLabels = c(as.character(dat$short_cite[order.ef]), rep("", I.all)),
+                     weight_scaled = c(weight_scaled[order.ef], weight_estimated_scaled[order.ef]), 
+                     lower = c(freqcipstudy[order.ef, 1], cis[order.ef, 1]), 
+                     upper = c(freqcipstudy[order.ef, 2], cis[order.ef, 2]),
+                     g = rep(c("Observed", "Estimated"), each = I.all))
+dfLab <- data.frame(studyLabels = dat$short_cite[order.ef]
+                    , y <- 1:I.all)
+    
+plot <-  ggplot2::ggplot(dfBoth, ggplot2::aes(x = effectSize, y = y)) +
+         ggplot2::geom_vline(xintercept = 0, linetype = "dotted") +
+         ggplot2::geom_point(ggplot2::aes(shape = as.factor(dfBoth$g), colour = as.factor(dfBoth$g)), size = dfBoth$weight_scaled * .8) +
+         ggplot2::geom_errorbarh(ggplot2::aes(xmin = dfBoth$lower, xmax = dfBoth$upper, colour = as.factor(dfBoth$g)), height = .1, show.legend = FALSE) +
+         ggplot2::scale_y_continuous(breaks = dfLab$y, labels = as.character(dfLab$studyLabels)) +
+         ggplot2::scale_color_manual("", values = c("black", "slategrey"), labels = c("Estimated", "Observed")) +
+         ggplot2::scale_shape_manual("", values = c(16, 15)) +
+         ggplot2::guides(shape = ggplot2::guide_legend(reverse=TRUE, override.aes = list(size=3)), colour = ggplot2::guide_legend(reverse=TRUE)) +
+         ggplot2::theme(axis.text.y.right = ggplot2::element_text(colour = c(rep(c("slategrey", "black"), each = I.all)))) +
+         ggplot2::xlab(expression("Z and "*theta)) +
+         ggplot2::ylab(" ")
+plot
+```
+
+<!-- ## Moderator age -->
+
+```{r chain-gen-cont, cache = T}
+res.mod <- mcmc_moderator(zi = dat$z_calc
+                          , ni = dat$n
+                          , xi = dat$mean_age_stand)
+
+theta_age <- res.mod$theta
+beta_age <- res.mod$beta
+beta_mat <- res.mod$beta.mat
+mutheta_age <- res.mod$mu.theta
+pred <- theta_age + beta_mat
+```
+
+```{r chaincheck-cont, fig.asp = 1, fig.cap="Inspecting chain convergence for a few parameters of the spike-and-slab model.", eval = F}
+layout(matrix(1:6, ncol = 2, byrow = TRUE))
+
+plot(mutheta_age, type = "l")
+abline(h = mean(mutheta_age), col = 2)
+
+acf(mutheta_age, main = "")
+
+plot(beta_age, type = "l")
+abline(h = mean(beta_age), col = 2)
+
+acf(beta_age, main = "")
+
+plot(res.mod$s2.theta, type = "l")
+abline(h = mean(res.mod$s2.theta), col = 2)
+
+acf(res.mod$s2.theta, main = "")
+
+plot(dat$z_calc, colMeans(res.mod$theta) + res.mod$standardized.x * mean(res.mod$beta))
+abline(0, 1)
+
+lm(z_calc ~ mean_age_stand, data = dat)
+mean(res.mod$mu.theta)
+mean(res.mod$beta)
+
+plot(res.mod$standardized.x, dat$z_calc, ylab = "Effect size", xlab = "Standardized Average Age", pch = 19, col = "darkgray")
+abline(lm(z_calc ~ mean_age_stand, data = dat), lwd = 2, col = "darkred")
+abline(a = mean(res.mod$mu.theta)
+, b = mean(res.mod$beta), lwd = 2, col = "slateblue")
+```
+
+<!-- ## Moderator study type -->
+
+```{r}
+datmod <- subset(dat, !is.na(main_or_baseline_study))
+ord.eff <- cbind(datmod$z_calc, datmod$z_calc - sqrt(datmod$z_var_calc), datmod$z_calc + sqrt(datmod$z_var_calc), datmod$main_or_baseline_study)
+ord.eff <- ord.eff[order(ord.eff[, 1]), ]
+```
+
+```{r chain-gen-ss, cache = T}
+res.ss <- mcmc_somesstudies(zi = datmod$z_calc
+                            , ni = datmod$n
+                            , xi = ifelse(datmod$main_or_baseline_study == "baseline", 1, 0))
+
+mod.theta <- res.ss$theta
+mod.mutheta <- res.ss$mu.theta
+```
+
+```{r chaincheck.ss, fig.asp = 1, fig.cap="Inspecting chain convergence for a few parameters of the spike-and-slab model.", eval = F}
+layout(matrix(1:6, ncol = 2, byrow = T))
+
+plot(mod.mutheta, type = "l")
+abline(h = mean(mod.mutheta), col = 2)
+
+acf(mod.mutheta, main = "")
+
+plot(mod.theta[, xind[2]], type = "l")
+abline(h = mean(mod.theta[, xind[2]]), col = 2)
+
+acf(mod.theta[, xind[2]], main = "")
+
+plot(res.ss$s2.theta, type = "l")
+abline(h = mean(res.ss$s2.theta), col = 2)
+
+acf(res.ss$s2.theta, main = "")
+```
+
+<!-- ## Bayes factors -->
+
+```{r ss-bfs, cache = T}
+#get unconstrained model estimates for reduced data set
+res_unconstrained_reduced <- mcmc_unconstrained(zi = datmod$z_calc
+                                        , ni = datmod$n)
+
+set0 <- c(1, .02, .15)
+z.ss <- datmod$z_calc
+ni.ss <- datmod$n
+x.ss <- ifelse(datmod$main_or_baseline_study == "baseline", 1, 0)
+bfs.ss <- get.bfs.ss(Z = z.ss, N = ni.ss
+                   , X_ss = x.ss
+                   , Theta.ss = mod.theta
+                   , Theta.gen = res_unconstrained_reduced$theta
+                   , R = 500000
+                   , priors = set0)
+```
+
+```{r cont-bfs, cache = T}
+set0 <- c(1, .02, .15)
+z.cont <- dat$z_calc
+ni.cont <- dat$n
+x.cont <- dat$mean_age_stand
+bfs.cont <- get.bfs.cont(Z = z.cont, N = ni.cont
+                   , X_cont = x.cont
+                   , Beta.mat = beta_mat
+                   , Theta.cont = theta_age
+                   , Theta.gen = rec.theta
+                   , R = 500000
+                   , priors = set0)
+```
+
+<!-- Sensitivity analysis -->
+
+```{r chain-sens, cache = T}
+sens1_unconstrained <- mcmc_unconstrained(zi = dat$z_calc
+                                        , ni = dat$n
+                                        , priors = c(1, .04, .3))
+sens2_unconstrained <- mcmc_unconstrained(zi = dat$z_calc
+                                        , ni = dat$n
+                                        , priors = c(1, .01, .3))
+sens3_unconstrained <- mcmc_unconstrained(zi = dat$z_calc
+                                        , ni = dat$n
+                                        , priors = c(1, .04, .08))
+sens4_unconstrained <- mcmc_unconstrained(zi = dat$z_calc
+                                        , ni = dat$n
+                                        , priors = c(1, .01, .08))
+```
+
+```{r bf-sens, cache = T}
+z.cont <- dat$z_calc
+ni.cont <- dat$n
+x.cont <- dat$mean_age_stand
+
+set1 <- c(1, .04, .3)
+bfs.sens1 <- get.bfs.cont(Z = z.cont, N = ni.cont
+                   , X_cont = x.cont
+                   , Beta.mat = beta_mat
+                   , Theta.cont = theta_age
+                   , Theta.gen = sens1_unconstrained$theta
+                   , R = 500000
+                   , priors = set1)
+set2 <- c(1, .01, .3)
+bfs.sens2 <- get.bfs.cont(Z = z.cont, N = ni.cont
+                   , X_cont = x.cont
+                   , Beta.mat = beta_mat
+                   , Theta.cont = theta_age
+                   , Theta.gen = sens2_unconstrained$theta
+                   , R = 500000
+                   , priors = set2)
+set3 <- c(1, .04, .08)
+bfs.sens3 <- get.bfs.cont(Z = z.cont, N = ni.cont
+                   , X_cont = x.cont
+                   , Beta.mat = beta_mat
+                   , Theta.cont = theta_age
+                   , Theta.gen = sens3_unconstrained$theta
+                   , R = 500000
+                   , priors = set3)
+set4 <- c(1, .01, .08)
+bfs.sens4 <- get.bfs.cont(Z = z.cont, N = ni.cont
+                   , X_cont = x.cont
+                   , Beta.mat = beta_mat
+                   , Theta.cont = theta_age
+                   , Theta.gen = sens4_unconstrained$theta
+                   , R = 500000
+                   , priors = set4)
+```
+
+
+
