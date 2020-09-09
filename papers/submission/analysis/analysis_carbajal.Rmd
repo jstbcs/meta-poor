@@ -39,7 +39,8 @@ freq.rma.age <- rma(dat$z_calc, vi = dat$z_var_calc, mods = ~ dat$mean_age_stand
 
 ```{r chain-gen-unconstrained, cache = T}
 res_unconstrained <- mcmc_unconstrained(zi = dat$z_calc
-                                        , ni = dat$n)
+                                        , ni = dat$n
+                                        , priors = c(1, .15, .15))
 
 rec.theta <- res_unconstrained$theta
 rec.mutheta <- res_unconstrained$mu.theta
@@ -85,9 +86,10 @@ plot
 <!-- ## Moderator age -->
 
 ```{r chain-gen-cont, cache = T}
-res.mod <- mcmc_moderator(zi = dat$z_calc
+res.mod <- mcmc_predictor(zi = dat$z_calc
                           , ni = dat$n
-                          , xi = dat$mean_age_stand)
+                          , xi = dat$mean_age_stand
+                          , priors = c(1, .15, .15, .15))
 
 theta_age <- res.mod$theta
 beta_age <- res.mod$beta
@@ -138,7 +140,8 @@ ord.eff <- ord.eff[order(ord.eff[, 1]), ]
 ```{r chain-gen-ss, cache = T}
 res.ss <- mcmc_somesstudies(zi = datmod$z_calc
                             , ni = datmod$n
-                            , xi = ifelse(datmod$main_or_baseline_study == "baseline", 1, 0))
+                            , xi = ifelse(datmod$main_or_baseline_study == "baseline", 1, 0)
+                            , priors = c(1, .15, .15))
 
 mod.theta <- res.ss$theta
 mod.mutheta <- res.ss$mu.theta
@@ -168,9 +171,10 @@ acf(res.ss$s2.theta, main = "")
 ```{r ss-bfs, cache = T}
 #get unconstrained model estimates for reduced data set
 res_unconstrained_reduced <- mcmc_unconstrained(zi = datmod$z_calc
-                                        , ni = datmod$n)
+                                        , ni = datmod$n
+                                        , priors = c(1, .15, .15))
 
-set0 <- c(1, .02, .15)
+set0 <- c(1, .15, .15)
 z.ss <- datmod$z_calc
 ni.ss <- datmod$n
 x.ss <- ifelse(datmod$main_or_baseline_study == "baseline", 1, 0)
@@ -183,7 +187,7 @@ bfs.ss <- get.bfs.ss(Z = z.ss, N = ni.ss
 ```
 
 ```{r cont-bfs, cache = T}
-set0 <- c(1, .02, .15)
+set0 <- c(1, .15, .15)
 z.cont <- dat$z_calc
 ni.cont <- dat$n
 x.cont <- dat$mean_age_stand
@@ -199,18 +203,37 @@ bfs.cont <- get.bfs.cont(Z = z.cont, N = ni.cont
 <!-- Sensitivity analysis -->
 
 ```{r chain-sens, cache = T}
-sens1_unconstrained <- mcmc_unconstrained(zi = dat$z_calc
-                                        , ni = dat$n
-                                        , priors = c(1, .04, .3))
-sens2_unconstrained <- mcmc_unconstrained(zi = dat$z_calc
-                                        , ni = dat$n
-                                        , priors = c(1, .01, .3))
-sens3_unconstrained <- mcmc_unconstrained(zi = dat$z_calc
-                                        , ni = dat$n
-                                        , priors = c(1, .04, .08))
-sens4_unconstrained <- mcmc_unconstrained(zi = dat$z_calc
-                                        , ni = dat$n
-                                        , priors = c(1, .01, .08))
+sens1_unconstrained <- mcmc_unconstrained(zi = datmod$z_calc
+                                        , ni = datmod$n
+                                        , priors = c(1, .3, .3))
+sens1_ss <- mcmc_somesstudies(zi = datmod$z_calc
+                            , ni = datmod$n
+                            , xi = ifelse(datmod$main_or_baseline_study == "baseline", 1, 0)
+                            , priors = c(1, .3, .3))
+
+sens2_unconstrained <- mcmc_unconstrained(zi = datmod$z_calc
+                                        , ni = datmod$n
+                                        , priors = c(1, .08, .3))
+sens2_ss <- mcmc_somesstudies(zi = datmod$z_calc
+                            , ni = datmod$n
+                            , xi = ifelse(datmod$main_or_baseline_study == "baseline", 1, 0)
+                            , priors = c(1, .08, .3))
+
+sens3_unconstrained <- mcmc_unconstrained(zi = datmod$z_calc
+                                        , ni = datmod$n
+                                        , priors = c(1, .3, .08))
+sens3_ss <- mcmc_somesstudies(zi = datmod$z_calc
+                            , ni = datmod$n
+                            , xi = ifelse(datmod$main_or_baseline_study == "baseline", 1, 0)
+                            , priors = c(1, .3, .08))
+
+sens4_unconstrained <- mcmc_unconstrained(zi = datmod$z_calc
+                                        , ni = datmod$n
+                                        , priors = c(1, .08, .08))
+sens4_ss <- mcmc_somesstudies(zi = datmod$z_calc
+                            , ni = datmod$n
+                            , xi = ifelse(datmod$main_or_baseline_study == "baseline", 1, 0)
+                            , priors = c(1, .08, .08))
 ```
 
 ```{r bf-sens, cache = T}
@@ -218,35 +241,31 @@ z.cont <- dat$z_calc
 ni.cont <- dat$n
 x.cont <- dat$mean_age_stand
 
-set1 <- c(1, .04, .3)
-bfs.sens1 <- get.bfs.cont(Z = z.cont, N = ni.cont
-                   , X_cont = x.cont
-                   , Beta.mat = beta_mat
-                   , Theta.cont = theta_age
+set1 <- c(1, .3, .3)
+bfs.sens1 <- get.bfs.ss(Z = z.ss, N = ni.ss
+                   , X_ss = x.ss
+                   , Theta.ss = sens1_ss$theta
                    , Theta.gen = sens1_unconstrained$theta
                    , R = 500000
                    , priors = set1)
-set2 <- c(1, .01, .3)
-bfs.sens2 <- get.bfs.cont(Z = z.cont, N = ni.cont
-                   , X_cont = x.cont
-                   , Beta.mat = beta_mat
-                   , Theta.cont = theta_age
+set2 <- c(1, .08, .3)
+bfs.sens2 <- get.bfs.ss(Z = z.ss, N = ni.ss
+                   , X_ss = x.ss
+                   , Theta.ss = sens2_ss$theta
                    , Theta.gen = sens2_unconstrained$theta
                    , R = 500000
                    , priors = set2)
-set3 <- c(1, .04, .08)
-bfs.sens3 <- get.bfs.cont(Z = z.cont, N = ni.cont
-                   , X_cont = x.cont
-                   , Beta.mat = beta_mat
-                   , Theta.cont = theta_age
+set3 <- c(1, .3, .08)
+bfs.sens3 <- get.bfs.ss(Z = z.ss, N = ni.ss
+                   , X_ss = x.ss
+                   , Theta.ss = sens3_ss$theta
                    , Theta.gen = sens3_unconstrained$theta
                    , R = 500000
                    , priors = set3)
-set4 <- c(1, .01, .08)
-bfs.sens4 <- get.bfs.cont(Z = z.cont, N = ni.cont
-                   , X_cont = x.cont
-                   , Beta.mat = beta_mat
-                   , Theta.cont = theta_age
+set4 <- c(1, .08, .08)
+bfs.sens4 <- get.bfs.ss(Z = z.ss, N = ni.ss
+                   , X_ss = x.ss
+                   , Theta.ss = sens4_ss$theta
                    , Theta.gen = sens4_unconstrained$theta
                    , R = 500000
                    , priors = set4)

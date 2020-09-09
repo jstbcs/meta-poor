@@ -8,13 +8,13 @@ output:
 ---
 
 ```{r meta-prep-modelfig, cache = TRUE, warning=F}
-sd0 <- .07
-sd1 <- .04
-eta = .7
+sd0 <- .45
+sd1 <- .2
+eta = .6
 
-gamma <- seq(-.25, .25, .005)
+gamma <- seq(-1.5, 1.5, .02)
 
-kern <- convKernel(sigma = 5, k = "gaussian")
+kern <- convKernel(sigma = 7, k = "gaussian")
 
 nrmlz <- function(mat)
 {
@@ -117,7 +117,7 @@ top2 <- max(Pos)
 top3 <- max(NullP)
 ```
 
-```{r meta-modelcomp, cache = FALSE, fig.cap= "Model specification and predictions for the positive-effects model and the general model. The models are on the left hand-side, and the predictions for data are on the right hand-side. Top row: Models for one study. Even though the positive-effects model is restricted to positive values in specification, it can predict small negative observed values. Middle row: Positive-effects model for two studies. Effects for any two studies are predicted to be correlated due to the hiearchical nature of the model, and mostly positive. Bottom row: General model for two studies. Effects are still correlated, but may be positive or negative. The predictions for any specific effect combination is weaker for the general model as is covers more parameter space.", fig.height=6.5, fig.width=5, dev = "png"}
+```{r meta-modelcomp, cache = FALSE, fig.cap= "Model specification and predictions for the positive-effects model and the general model. The models are on the left hand-side, and the predictions for data are on the right hand-side. Top row: Models for one study. Even though the positive-effects model is restricted to positive values in specification, it can predict small negative observed values. Middle row: Positive-effects model for two studies. Effects for any two studies are predicted to be correlated due to the hiearchical nature of the model, and mostly positive. Bottom row: General model for two studies. Effects are still correlated, but may be positive or negative. The predictions for any specific effect combination is weaker for the general model as is covers more parameter space.", fig.height=5.85, fig.width=4.5, dev = "png"}
 modFig <- function(mat, par, ylabel, xlabel, main, top, mod, xax = TRUE, yax = TRUE){
   image(par
         , par
@@ -131,9 +131,9 @@ modFig <- function(mat, par, ylabel, xlabel, main, top, mod, xax = TRUE, yax = T
         , main = ""
         , cex.lab = 1.2)
   if(xax == TRUE){
-  axis(1, at = seq(-.2, .2, .2), cex.axis = 1.2)}
+  axis(1, at = seq(-1, 1, 1), cex.axis = 1.2)}
   if(yax == TRUE){
-  axis(2, at = seq(-.2, .2, .2), cex.axis = 1.2)}
+  axis(2, at = seq(-1, 1, 1), cex.axis = 1.2)}
   abline(h = 0, col = "gray80", lty = "dotted")
   abline(v = 0, col = "gray80", lty = "dotted")
   mtext(mod, side = 2, line = 4)
@@ -147,7 +147,7 @@ layout(matrix(1:6, ncol = 2), heights = c(.35, .3, .35))
 
 par(mar=c(3.5,4.5,3.5,1.5), mgp = c(2.4,.9,0))
 ## Uni-dimensional model Figure
-x <- seq(-.25, .25, .001)
+x <- seq(-1.5, 1.5, .001)
 y <- dnorm(x, 0, sd0)
 y2 <- dtnorm(x, 0, sd0, lower = 0)
 
@@ -158,9 +158,12 @@ plot(x, y2, type = "l"
      , frame.plot = F
      , lwd = 1.2
      , col = "gray30"
+     , cex.lab = 1.2
+     , yaxt = "n"
      )
+axis(2, seq(0, 1.5, .5))
 abline(v = 0, col = "indianred", lwd = 2)
-mtext("A.", side = 3, cex = 1, line = -1.5, at = -0.22)
+mtext("A.", side = 3, cex = 1, line = -1.5, at = -1.3)
 
 mtext("Model", side = 3, cex = 1)
 lines(x, y
@@ -181,7 +184,7 @@ modFig(PosH, gamma
        , mod = "", top = top2, main = ""
        , xax = FALSE
        , yax = TRUE)
-mtext("C.", side = 3, cex = 1, line = -1.5, at = -0.22)
+mtext("C.", side = 3, cex = 1, line = -1.5, at = -1.25)
 
 par(mar=c(3.5,4.5,1,1.5), mgp = c(2.4,.9,0))
 modFig(GeneralH, gamma
@@ -189,7 +192,7 @@ modFig(GeneralH, gamma
        , mod = "", top = top2, main = ""
        , xax = TRUE
        , yax = TRUE)
-mtext("E.", side = 3, cex = 1, line = -1.5, at = -0.22)
+mtext("E.", side = 3, cex = 1, line = -1.5, at = -1.25)
 
 
 #predictions
@@ -216,9 +219,12 @@ plot(x, pred2, type = "l"
      , frame.plot = F
      , lwd = 1.2
      , col = "gray30"
+     , cex.lab = 1.2
+     , yaxt = "n"
      )
+axis(2, seq(0, 1.5, .5))
 abline(v = 0, col = "indianred", lwd = 2)
-mtext("B.", side = 3, cex = 1, line = -1.5, at = -0.22)
+mtext("B.", side = 3, cex = 1, line = -1.5, at = -1.3)
 
 mtext("Prediction", side = 3, cex = 1)
 lines(x, pred1
@@ -226,7 +232,7 @@ lines(x, pred1
      , col = "gray30"
      )
 abline(h = 0, col = "gray30", lwd = 1.1)
-mtext("One Dimension", side = 4, line = .5, cex = 1)
+mtext("One Dimension", side = 4, line = .7, cex = 1)
 
 par(mar=c(1,4.5,1,1.5), mgp = c(2.4,.9,0))
 
@@ -235,8 +241,8 @@ modFig(PosP, gamma
        , mod = "", top = top2, main = ""
        , xax = FALSE)
 # points(xp, yp, pch = 20, col = "darkred")
-mtext("Positive", side = 4, line = .5, cex = 1)
-mtext("D.", side = 3, cex = 1, line = -1.5, at = -0.22)
+mtext("Positive", side = 4, line = .7, cex = 1)
+mtext("D.", side = 3, cex = 1, line = -1.5, at = -1.25)
 
 par(mar=c(3.5,4.5,1,1.5), mgp = c(2.4,.9,0))
 modFig(GeneralP, gamma
@@ -245,9 +251,9 @@ modFig(GeneralP, gamma
        , mod = "", top = top2, main = ""
        , xax = TRUE)
 # points(xp, yp, pch = 20, col = "darkred")
-mtext("F.", side = 3, cex = 1, line = -1.5, at = -0.22)
+mtext("F.", side = 3, cex = 1, line = -1.5, at = -1.25)
 
-mtext("General", side = 4, line = .5, cex = 1)
+mtext("General", side = 4, line = .7, cex = 1)
 
 ```
 

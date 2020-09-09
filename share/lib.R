@@ -13,7 +13,7 @@ mcmc_unconstrained <- function(zi
                                , ni
                                , M = 50000
                                , burnin = 5000
-                               , priors = c(1, .02, .15) #1 = shape of tau^2, 2 = scale of tau^2, 3 = sd of mu 
+                               , priors = c(1, .15, .15) #1 = shape of tau^2, 2 = scale of tau^2, 3 = sd of mu 
                                ){
   #data setup
   vi <- 1 / (ni - 3)
@@ -49,7 +49,7 @@ mcmc_unconstrained <- function(zi
     
     # #s2s
     scale <- sum((theta[m, ] - mu.theta[m])^2) / 2
-    s2.theta[m] <- MCMCpack::rinvgamma(1, priors[1] + I/2, scale + h.theta.2)
+    s2.theta[m] <- MCMCpack::rinvgamma(1, priors[1] + I/2, scale + h.theta.2^2)
   }
   
   return(list("theta" = theta[keep, ]
@@ -60,13 +60,13 @@ mcmc_unconstrained <- function(zi
 
 ## Gibbs sampler for the unconstrained metaregression model
 
-mcmc_moderator <- function(zi
+mcmc_predictor <- function(zi
                            , ni
                            , xi
                            , cont = TRUE #Is the moderator continuous?
                            , M = 50000
                            , burnin = 5000
-                           , priors = c(1, .02, .15, .15) #1 = shape of tau^2, 2 = scale of tau^2, 3 = sd of mu, 4 = sd of beta 
+                           , priors = c(1, .15, .15, .15) #1 = shape of tau^2, 2 = scale of tau^2, 3 = sd of mu, 4 = sd of beta 
 ){
   #data setup
   vi <- 1 / (ni - 3)
@@ -112,7 +112,7 @@ mcmc_moderator <- function(zi
     
     # #s2s
     scale <- sum((theta[m, ] - mu.theta[m])^2) / 2
-    s2.theta[m] <- MCMCpack::rinvgamma(1, priors[1] + I/2, scale + h.theta.2)
+    s2.theta[m] <- MCMCpack::rinvgamma(1, priors[1] + I/2, scale + h.theta.2^2)
   }
   
   return(list("theta" = theta[keep, ]
@@ -131,7 +131,7 @@ mcmc_somesstudies <- function(zi
                              , xi # has to be 0s (for null effect) and 1s (for positive effect)
                              , M = 50000
                              , burnin = 5000
-                             , priors = c(1, .02, .15) #1 = shape of tau^2, 2 = scale of tau^2, 3 = sd of mu
+                             , priors = c(1, .15, .15) #1 = shape of tau^2, 2 = scale of tau^2, 3 = sd of mu
 ){
   #data setup
   vi <- 1 / (ni - 3)
@@ -169,7 +169,7 @@ mcmc_somesstudies <- function(zi
     
     # s2.theta
     scale <- sum((theta[m, xind] - mu.theta[m])^2) / 2
-    s2.theta[m] <- MCMCpack::rinvgamma(1, priors[1] + xnum/2, scale + h.theta.2)
+    s2.theta[m] <- MCMCpack::rinvgamma(1, priors[1] + xnum/2, scale + h.theta.2^2)
   }
   
   return(list("theta" = t(t(theta) * xi)[keep, ]
@@ -182,13 +182,13 @@ mcmc_somesstudies <- function(zi
 #########BFS######################
 
 #Comparison including some-studies model
-get.bfs.ss <- function(Z, N, X_ss, Theta.ss, Theta.gen, R = 100000, priors = c(1, .01, .15)){
+get.bfs.ss <- function(Z, N, X_ss, Theta.ss, Theta.gen, R = 100000, priors = c(1, .15, .15)){
   I <- length(Z)
   # Analytic Bayes factor
   
   ## Marginal likelihood unconstrained model
   s2_mu <- rep(priors[3]^2, R)
-  s2_theta <- MCMCpack::rinvgamma(R, priors[1], priors[2])
+  s2_theta <- MCMCpack::rinvgamma(R, priors[1], priors[2]^2)
   get.log.likeli.g <- function(s2, z, n){ #s2 = vector of s2_mu and s2_theta
     sum(dnorm(z, 0, sqrt(1/(n - 3) + s2[1] + s2[2]), log = T))
   }
@@ -265,14 +265,14 @@ get.bfs.ss <- function(Z, N, X_ss, Theta.ss, Theta.gen, R = 100000, priors = c(1
 
 
 #Comparison including moderator models
-get.bfs.cont <- function(Z, N, X_cont, Beta.mat, Theta.cont, Theta.gen, R = 100000, priors = c(1, .01, .15)){
+get.bfs.cont <- function(Z, N, X_cont, Beta.mat, Theta.cont, Theta.gen, R = 100000, priors = c(1, .15, .15)){
   I <- length(Z)
   
   # Analytic Bayes factor
   
   ## Marginal likelihood unconstrained model
   s2_mu <- rep(priors[3]^2, R)
-  s2_theta <- MCMCpack::rinvgamma(R, priors[1], priors[2])
+  s2_theta <- MCMCpack::rinvgamma(R, priors[1], priors[2]^2)
   get.log.likeli.g <- function(s2, z, n){ #s2 = vector of s2_mu and s2_theta
     sum(dnorm(z, 0, sqrt(1/(n - 3) + s2[1] + s2[2]), log = T))
   }
@@ -323,23 +323,27 @@ get.bfs.cont <- function(Z, N, X_cont, Beta.mat, Theta.cont, Theta.gen, R = 1000
   bf.FP <- PriorCount/PostCount
   bf.Fp1 <- BF.g1 * priorprob.c / postprob.c
   
-  ##Cont+ Model
+  ##Model_(p+beta)p
   pred.eff <- Theta.cont + Beta.mat
-  good <- pred.eff > 0
+  good <- pred.eff > 0 & Theta.cont > 0
   all.good <- apply(good, 1, mean)
   PostCount <- mean(all.good == 1)
   
   ### Prior probability of all positive
   mu.theta <- rnorm(R, 0, sqrt(s2_mu))
   beta <- rnorm(R, 0, sqrt(s2_beta))
-  params <- cbind(mu, beta, s2_theta, s2_beta)
-  get.prob.pos <- function(pars, X_cont){
-    sum(pnorm(0, pars[1] + X_cont * pars[2], sqrt(pars[3] + X_cont^2 * pars[4]), lower.tail = F, log.p = T))
+  params <- cbind(mu, beta, s2_theta)
+  # get.prob.pos <- function(pars, X_cont){
+  #   sum(pnorm(0, pars[1] + X_cont * pars[2], sqrt(pars[3]), lower.tail = F, log.p = T))
+  # }
+  get.prob.pos <- function(pars, X_cont, I){
+    nus <- rnorm(I, pars[1], sqrt(pars[3]))
+    sum(nus > 0) == I & sum((nus + X_cont * pars[2]) > 0) == I
   }
-  res <- apply(params, 1, get.prob.pos, X_cont = X_cont)
-  PriorCount <- mean(exp(res))
+  res <- apply(params, 1, get.prob.pos, X_cont = X_cont, I = I)
+  PriorCount <- mean(res)
   
-  ##Cont+ Model but only theta
+  ##Model_(p+beta)
   pred.eff <- Theta.cont
   good <- pred.eff > 0
   all.good <- apply(good, 1, mean)
@@ -355,9 +359,10 @@ get.bfs.cont <- function(Z, N, X_cont, Beta.mat, Theta.cont, Theta.gen, R = 1000
   bf.contpcont2 <- PriorCount.2/PostCount.2
   
   # Bayes factors we are really interested in: BF_gss+, BF_g+, BF_g0, the others are for checking
-  BF.gcontp <- BF.gcont * bf.contpcont
+  BF.gpmargin <- BF.gcont * bf.contpcont
+  BF.gpresid <- BF.gcont * bf.contpcont2
   BF.gp <- bf.FP
   BF.g0 <- BF.g0
   
-  return(list(bfs = c('BF.gcontp' = BF.gcontp, 'BF.gcont' = BF.gcont, 'BF.gp' = BF.gp, 'BF.g1' = bf.Fp1, 'BF.g0' = BF.g0)))
+  return(list(bfs = c('BF.gpmargin' = BF.gpmargin, 'BF.gpresid' = BF.gpresid, 'BF.gcont' = BF.gcont, 'BF.gp' = BF.gp, 'BF.g1' = bf.Fp1, 'BF.g0' = BF.g0)))
 }

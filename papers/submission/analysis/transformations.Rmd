@@ -104,63 +104,53 @@ plot(ds, d2s, col = adjustcolor(1, .5), pch = 19)
 abline(0, 1)
 ```
 
-```{r transplot, fig.asp = .92, fig.width = 4.5, fig.cap="Effect size measures for simulated data from 100 studies with 100 participants. The panels show transformations from Cohen's d to A. Cohen's d, B. Hedges' g, C. Fisher's Z, and D. log odds ratio. While order and sign of the effect size measures are consistent the scales differ substantially."}
 
-layout(matrix(1:4, ncol = 2, byrow = T), heights = c(.46, .54))
-par(mar = c(1, 3, 1, 1), mgp = c(2, .7, 0))
+```{r simulation-density, echo = F}
+set.seed(123)
 
-plot(ds, d2s
-     , col = adjustcolor(1, .5), pch = 19
-     , ylim = range(lors), xlim = range(lors)
-     , ylab = "Cohen's d", xlab = "", xaxt = "n")
-mtext("A.", 3, line = -.7, at = -1.2)
-abline(0, 1, col = "gray50")
-abline(h = 0, col = "gray50")
-abline(v = 0, col = "gray50")
-
-plot(ds, gs
-     , col = adjustcolor(1, .5), pch = 19
-     , ylim = range(lors), xlim = range(lors)
-     , ylab = "Hedges' g", xlab = "", xaxt = "n")
-mtext("B.", 3, line = -.7, at = -1.2)
-abline(0, 1, col = "gray50")
-abline(h = 0, col = "gray50")
-abline(v = 0, col = "gray50")
-
-par(mar = c(3, 3, 1, 1), mgp = c(2, .7, 0))
-
-plot(ds, z2s
-     , col = adjustcolor(1, .5), pch = 19
-     , ylim = range(lors), xlim = range(lors)
-     , ylab = "Fisher's Z", xlab = "Cohen's d")
-mtext("C.", 3, line = -.7, at = -1.2)
-abline(0, 1, col = "gray50")
-abline(h = 0, col = "gray50")
-abline(v = 0, col = "gray50")
-
-plot(ds, lors
-     , col = adjustcolor(1, .5), pch = 19
-     , ylim = range(lors), xlim = range(lors)
-     , ylab = "Log Odds Ratio", xlab = "Cohen's d")
-mtext("D.", 3, line = -.7, at = -1.2)
-abline(0, 1, col = "gray50")
-abline(h = 0, col = "gray50")
-abline(v = 0, col = "gray50")
+M.sim <- 10000
+mu.sim <- rnorm(M.sim, 0, 0.15)
+tau2.sim <- rinvgamma(M.sim, 1, 0.15^2)
+z.sim <- rnorm(M.sim, mu.sim, sqrt(tau2.sim))
 ```
 
-```{r priors, eval = F}
-dt.ls <- function(x, df, mu, scale) 1/scale * dt((x - mu)/scale, df)
-pt.ls <- function(x, df, mu, scale) pt((x - mu)/scale, df)
-
-x <- seq(-2, 2, .01)
-y1 <- dcauchy(x, 0, 1/sqrt(2))
-y2 <- dtrunc(x, "cauchy", a = 0, location = 0, scale = 1/sqrt(2))
-y3 <- dtrunc(x, "t.ls", a = 0, df = 3, mu = .35, scale = .102)
-
-plot(x, y3, type = "l", lwd = 2, col = "slateblue", ylab = "Density")
-lines(x, y1, lwd = 2, col = "darkred")
-lines(x, y2, lwd = 2, col = "darkgreen")
+```{r sim.transform}
+d.sim <- ztod(z.sim)
+lor.sim <- dtolor(d.sim)
+g.sim <- dtog(d.sim, n = 50)
 ```
 
+```{r fig-transform, fig.asp = 1, fig.width=5.5, fig.cap="Prior distributions and marginal priors on true study effect sizes. A.-B. Priors on the overall effect size and between-study variance for the Fisher's $Z$ statistic. C. Marginal prior for any one study's true Fisher's $Z$ statistic. D.-F. Marginal priors for true alternative effect size measures of any one study. The scales are drastically different."}
+par(mgp = c(2, .7, 0), mar = c(3, 3, 2, 2), cex.main = 1)
+layout(matrix(1:6, ncol = 2, byrow = T))
 
+x.mu <- seq(-1, 1, .01)
+y.mu <- dnorm(x.mu, 0, .15)
+plot(x.mu, y.mu, type = "l", col = "slateblue", lwd = 2
+     , xlab = expression("Overall" ~ "mean" ~ mu), ylab = "Density"
+     , main = expression("A. Prior on" ~ mu), frame.plot = F, yaxt = "n")
+axis(2, 0:2)
+
+x.t2 <- seq(0, .3, .001)
+y.t2 <- dinvgamma(x.t2, 1, .15^2)
+plot(x.t2, y.t2, type = "l", col = "slateblue", lwd = 2
+     , xlab = expression("Study" ~ "variance" ~ tau^2), ylab = "Density"
+     , main = expression("B. Prior on" ~ tau^2), frame.plot = F)
+
+hist(z.sim[z.sim < 1 & z.sim > -1], probability = T
+     , main = expression("C. Prior on Fisher's Z"), xlab = "Fisher's Z", ylim = c(0, 1.7))
+lines(density(z.sim), col = "slateblue", lwd = 2)
+
+hist(d.sim[z.sim < 1 & z.sim > -1], probability = T
+     , main = expression("D. Implied prior on Cohen's d"), xlab = "Cohen's d", ylim = c(0, 1.7))
+lines(density(d.sim[z.sim < 1 & z.sim > -1]), col = "slateblue", lwd = 2)
+
+hist(g.sim[z.sim < 1 & z.sim > -1], probability = T
+     , main = expression("E. Implied prior on Hedges' g"), xlab = "Hedges' g", ylim = c(0, 1.7))
+lines(density(g.sim[z.sim < 1 & z.sim > -1]), col = "slateblue", lwd = 2)
+
+hist(lor.sim[z.sim < 1 & z.sim > -1], probability = T
+     , main = expression("F. Implied prior on log odds ratio"), xlab = "LOR", ylim = c(0, 1.7))
+lines(density(lor.sim[z.sim < 1 & z.sim > -1]), col = "slateblue", lwd = 2)
+```
 
