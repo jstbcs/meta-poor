@@ -142,15 +142,15 @@ hist(z.sim[z.sim < 1 & z.sim > -1], probability = T
 lines(density(z.sim), col = "slateblue", lwd = 2)
 
 hist(d.sim[z.sim < 1 & z.sim > -1], probability = T
-     , main = expression("D. Implied prior on Cohen's d"), xlab = "Cohen's d", ylim = c(0, 1.7))
+     , main = expression("D. Marginal prior on Cohen's d"), xlab = "Cohen's d", ylim = c(0, 1.7))
 lines(density(d.sim[z.sim < 1 & z.sim > -1]), col = "slateblue", lwd = 2)
 
 hist(g.sim[z.sim < 1 & z.sim > -1], probability = T
-     , main = expression("E. Implied prior on Hedges' g"), xlab = "Hedges' g", ylim = c(0, 1.7))
+     , main = expression("E. Marginal prior on Hedges' g"), xlab = "Hedges' g", ylim = c(0, 1.7))
 lines(density(g.sim[z.sim < 1 & z.sim > -1]), col = "slateblue", lwd = 2)
 
 hist(lor.sim[z.sim < 1 & z.sim > -1], probability = T
-     , main = expression("F. Implied prior on log odds ratio"), xlab = "LOR", ylim = c(0, 1.7))
+     , main = expression("F. Marginal prior on log odds ratio"), xlab = "LOR", ylim = c(0, 1.7))
 lines(density(lor.sim[z.sim < 1 & z.sim > -1]), col = "slateblue", lwd = 2)
 ```
 
